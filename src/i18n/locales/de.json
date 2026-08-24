@@ -1,0 +1,19 @@
+{
+  "errors": {
+    "BAD_REQUEST": "Die Anfrage konnte nicht verarbeitet werden.",
+    "UNAUTHORIZED": "Sie sind nicht autorisiert. Bitte melden Sie sich erneut an.",
+    "FORBIDDEN": "Sie haben keine Berechtigung, diese Aktion auszuführen.",
+    "NOT_FOUND": "Die angeforderte Ressource wurde nicht gefunden.",
+    "CONFLICT": "Diese Anfrage steht im Konflikt mit vorhandenen Daten.",
+    "PAYLOAD_TOO_LARGE": "Die hochgeladene Datei oder Anfrage ist zu groß.",
+    "UNSUPPORTED_MEDIA_TYPE": "Dieser Dateityp oder dieses Medienformat wird nicht unterstützt.",
+    "VALIDATION_ERROR": "Bitte überprüfen Sie die eingegebenen Informationen.",
+    "RATE_LIMIT_EXCEEDED": "Zu viele Anfragen. Bitte versuchen Sie es später erneut.",
+    "INTERNAL_SERVER_ERROR": "Auf dem Server ist ein Fehler aufgetreten. Bitte versuchen Sie es erneut.",
+    "BAD_GATEWAY": "Der Server hat eine ungültige Antwort erhalten. Bitte versuchen Sie es erneut.",
+    "SERVICE_UNAVAILABLE": "Der Dienst ist vorübergehend nicht verfügbar. Bitte versuchen Sie es später erneut.",
+    "GATEWAY_TIMEOUT": "Der Server hat zu lange für die Antwort benötigt. Bitte versuchen Sie es erneut.",
+    "NETWORK_ERROR": "Verbindung zum Server fehlgeschlagen. Bitte überprüfen Sie Ihre Internetverbindung.",
+    "UNKNOWN_ERROR": "Etwas ist schiefgelaufen. Bitte versuchen Sie es erneut."
+  }
+}

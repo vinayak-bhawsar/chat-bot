@@ -1,0 +1,19 @@
+{
+  "errors": {
+    "BAD_REQUEST": "No se pudo procesar la solicitud.",
+    "UNAUTHORIZED": "No estás autorizado. Inicia sesión de nuevo.",
+    "FORBIDDEN": "No tienes permiso para realizar esta acción.",
+    "NOT_FOUND": "No se encontró el recurso solicitado.",
+    "CONFLICT": "Esta solicitud entra en conflicto con los datos existentes.",
+    "PAYLOAD_TOO_LARGE": "El archivo o la solicitud es demasiado grande.",
+    "UNSUPPORTED_MEDIA_TYPE": "Este tipo de archivo o formato multimedia no es compatible.",
+    "VALIDATION_ERROR": "Comprueba la información que has introducido.",
+    "RATE_LIMIT_EXCEEDED": "Demasiadas solicitudes. Inténtalo de nuevo más tarde.",
+    "INTERNAL_SERVER_ERROR": "Algo salió mal en el servidor. Inténtalo de nuevo.",
+    "BAD_GATEWAY": "El servidor recibió una respuesta no válida. Inténtalo de nuevo.",
+    "SERVICE_UNAVAILABLE": "El servicio no está disponible temporalmente. Inténtalo de nuevo más tarde.",
+    "GATEWAY_TIMEOUT": "El servidor tardó demasiado en responder. Inténtalo de nuevo.",
+    "NETWORK_ERROR": "No se pudo conectar con el servidor. Comprueba tu conexión a internet.",
+    "UNKNOWN_ERROR": "Ocurrió un error inesperado. Inténtalo de nuevo."
+  }
+}
