@@ -68,24 +68,16 @@ export default function SidebarFooter({
   };
 
   // ==============================================================
-  // LOGIN
+  // LOGIN / SIGNUP / LOGOUT
   // ==============================================================
 
   const handleLogin = () => {
     window.location.href = "/login";
   };
 
-  // ==============================================================
-  // SIGN UP
-  // ==============================================================
-
   const handleSignup = () => {
     window.location.href = "/signup";
   };
-
-  // ==============================================================
-  // LOGOUT
-  // ==============================================================
 
   const handleLogout = () => {
     logout();
@@ -107,51 +99,92 @@ export default function SidebarFooter({
   // ==============================================================
 
   return (
-    <div className="shrink-0 border-t border-zinc-200/80 bg-[#f7f7f8] p-2.5 space-y-1">
+    <div className="shrink-0 border-t border-zinc-200/80 bg-[#f7f7f8] p-2.5 space-y-1.5">
       {/* ========================================================
-          USER PROFILE CARD OR AUTH TRIGGER
+          USER PROFILE CARD (Authenticated) OR GUEST PROMPT (Unauthenticated)
           ======================================================== */}
-      {isAuthenticated && user && !collapsed ? (
-        <div className="rounded-xl border border-zinc-200/80 bg-white p-2 shadow-2xs">
-          <div className="flex items-center gap-2.5">
-            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-tr from-violet-600 to-indigo-600 text-white text-xs font-bold shadow-2xs">
-              {displayName.charAt(0).toUpperCase()}
-            </div>
-
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-xs font-semibold text-zinc-900 leading-tight">
-                {displayName}
-              </p>
-              <div className="flex items-center gap-1.5 mt-0.5">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
-                <span className="text-[10px] text-zinc-500 font-medium truncate">
-                  {user.email || "Active User"}
-                </span>
+      {isLoading ? null : isAuthenticated && user ? (
+        !collapsed ? (
+          <div className="rounded-xl border border-zinc-200/80 bg-white p-2 shadow-2xs">
+            <div className="flex items-center gap-2.5">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-tr from-violet-600 to-indigo-600 text-white text-xs font-bold shadow-2xs">
+                {displayName.charAt(0).toUpperCase()}
               </div>
-            </div>
 
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-xs font-semibold text-zinc-900 leading-tight">
+                  {displayName}
+                </p>
+                <div className="flex items-center gap-1.5 mt-0.5">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
+                  <span className="text-[10px] text-zinc-500 font-medium truncate">
+                    {user.email || "Active User"}
+                  </span>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleSettings}
+                className={`flex h-7 w-7 items-center justify-center rounded-lg transition-colors ${
+                  settingsOpen
+                    ? "bg-zinc-200 text-zinc-900"
+                    : "text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+                }`}
+                title="Settings & Language"
+              >
+                <Settings className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={handleSettings}
+            title={displayName}
+            className="flex h-9 w-9 mx-auto items-center justify-center rounded-xl bg-gradient-to-tr from-violet-600 to-indigo-600 text-white text-xs font-bold shadow-2xs hover:scale-105 transition-transform"
+          >
+            {displayName.charAt(0).toUpperCase()}
+          </button>
+        )
+      ) : (
+        /* GUEST MODE: Sign In button + Settings */
+        <div className="space-y-1">
+          {!collapsed ? (
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={handleLogin}
+                className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-zinc-900 px-3 py-2 text-xs font-semibold text-white shadow-2xs hover:bg-zinc-800 transition-all active:scale-[0.98]"
+              >
+                <LogIn className="h-3.5 w-3.5" />
+                <span>Sign In</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleSettings}
+                title="Settings & Language"
+                className={`flex h-8 w-8 items-center justify-center rounded-xl border border-zinc-200/80 bg-white transition-colors ${
+                  settingsOpen
+                    ? "bg-zinc-200 text-zinc-900 border-zinc-300"
+                    : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-800"
+                }`}
+              >
+                <Settings className="h-4 w-4" />
+              </button>
+            </div>
+          ) : (
             <button
               type="button"
-              onClick={handleSettings}
-              className={`flex h-7 w-7 items-center justify-center rounded-lg transition-colors ${
-                settingsOpen
-                  ? "bg-zinc-200 text-zinc-900"
-                  : "text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
-              }`}
-              title="Settings"
+              onClick={handleLogin}
+              title="Sign In"
+              className="flex h-9 w-9 mx-auto items-center justify-center rounded-xl bg-zinc-900 text-white shadow-2xs hover:bg-zinc-800 transition-colors"
             >
-              <Settings className="h-4 w-4" />
+              <LogIn className="h-4 w-4" />
             </button>
-          </div>
+          )}
         </div>
-      ) : (
-        <SidebarItem
-          title="Settings"
-          icon={Settings}
-          collapsed={collapsed}
-          showText={showText}
-          onClick={handleSettings}
-        />
       )}
 
       {/* ========================================================
@@ -199,14 +232,7 @@ export default function SidebarFooter({
           {isLoading ? null : !isAuthenticated ? (
             <div className="space-y-1">
               <SidebarItem
-                title="Login"
-                icon={LogIn}
-                collapsed={collapsed}
-                showText={showText}
-                onClick={handleLogin}
-              />
-              <SidebarItem
-                title="Sign Up"
+                title="Create Account"
                 icon={UserPlus}
                 collapsed={collapsed}
                 showText={showText}

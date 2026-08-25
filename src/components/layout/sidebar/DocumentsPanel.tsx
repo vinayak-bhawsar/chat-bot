@@ -17,7 +17,9 @@ import {
   FileText,
   Folder,
   FolderPlus,
+  Image as ImageIcon,
   Loader2,
+  LogIn,
   Trash2,
   Upload,
   X,
@@ -629,11 +631,6 @@ export default function DocumentsPanel({
       documentId
     );
 
-    if (typeof window !== "undefined") {
-      localStorage.setItem("active_document_id", documentId);
-      localStorage.setItem("active_document_name", item.file_name || "");
-    }
-
     // ------------------------------------------------------------
     // EVENT PAYLOAD
     // ------------------------------------------------------------
@@ -1091,6 +1088,30 @@ export default function DocumentsPanel({
               </div>
             )}
 
+            {!loading && !isAuthenticated && (
+              <div className="flex h-full min-h-[250px] flex-col items-center justify-center rounded-xl border-2 border-dashed border-zinc-200 p-6 text-center bg-white/50">
+                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600 border border-indigo-100">
+                  <FileText className="h-6 w-6" />
+                </div>
+                <h3 className="mt-3 text-sm font-bold text-zinc-900">
+                  Sign in required
+                </h3>
+                <p className="mt-1 max-w-xs text-xs text-zinc-500 leading-relaxed">
+                  Knowledge Base storage and document indexing require an account. Sign in to upload and manage your files.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    window.location.href = "/login";
+                  }}
+                  className="mt-4 flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-2xs hover:bg-indigo-700 transition-colors"
+                >
+                  <LogIn className="h-4 w-4" />
+                  Sign In to Continue
+                </button>
+              </div>
+            )}
+
             {!loading &&
               isAuthenticated &&
               documents.length ===
@@ -1153,6 +1174,8 @@ export default function DocumentsPanel({
                         >
                           {item.is_folder ? (
                             <Folder className="h-4.5 w-4.5" />
+                          ) : item.mime_type?.includes("image") || /\.(png|jpe?g|webp)$/i.test(item.file_name) ? (
+                            <ImageIcon className="h-4.5 w-4.5" />
                           ) : item.mime_type?.includes("pdf") || item.file_name.toLowerCase().endsWith(".pdf") ? (
                             <FileText className="h-4.5 w-4.5" />
                           ) : (

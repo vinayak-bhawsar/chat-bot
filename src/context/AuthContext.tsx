@@ -34,6 +34,10 @@ interface AuthContextType {
 
   isAuthenticated: boolean;
 
+  isGuest: boolean;
+
+  authMode: "authenticated" | "guest";
+
   isLoading: boolean;
 
   login: (
@@ -226,13 +230,26 @@ export function AuthProvider({
             // ----------------------------------------------------
 
             setUser(currentUser);
-          } catch (error) {
-            console.log(
-              "Session expired or unauthenticated. User logged out."
-            );
+          } catch (error: any) {
+            const isAuthError =
+              error?.statusCode === 401 ||
+              error?.status === 401 ||
+              error?.errorCode === "UNAUTHORIZED" ||
+              (typeof error?.message === "string" &&
+                error.message.toUpperCase().includes("UNAUTHORIZED"));
 
-            clearTokens();
-            setUser(null);
+            if (isAuthError) {
+              console.log(
+                "Session expired or unauthenticated. User logged out."
+              );
+              clearTokens();
+              setUser(null);
+            } else {
+              console.warn(
+                "Auth check encountered a network/server issue. Keeping stored session intact.",
+                error
+              );
+            }
           } finally {
             /*
              * Authentication decision is complete.
@@ -374,6 +391,12 @@ export function AuthProvider({
 
     isAuthenticated:
       user !== null,
+
+    isGuest:
+      user === null,
+
+    authMode:
+      user !== null ? "authenticated" : "guest",
 
     isLoading,
 

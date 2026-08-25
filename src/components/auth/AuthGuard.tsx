@@ -2,6 +2,7 @@
 
 import {
   useEffect,
+  useState,
 } from "react";
 
 import {
@@ -35,57 +36,55 @@ export default function AuthGuard({
     isLoading,
   } = useAuth();
 
+  const [isMounted, setIsMounted] = useState(false);
 
   useEffect(() => {
+    setIsMounted(true);
+  }, []);
 
+  useEffect(() => {
     // ------------------------------------------------------------
-    // Wait until authentication check finishes
+    // Wait until router is mounted and authentication check finishes
     // ------------------------------------------------------------
-
-    if (isLoading) {
+    if (!isMounted || isLoading) {
       return;
     }
-
 
     // ------------------------------------------------------------
     // Check whether current page is public
     // ------------------------------------------------------------
-
     const isPublicRoute =
       PUBLIC_ROUTES.includes(pathname);
-
 
     // ------------------------------------------------------------
     // User is NOT logged in
     // ------------------------------------------------------------
-
     if (
       !isAuthenticated &&
       !isPublicRoute
     ) {
-
-      router.replace("/login");
-
+      try {
+        router.replace("/login");
+      } catch {}
       return;
     }
-
 
     // ------------------------------------------------------------
     // User IS logged in
     // Don't allow login/signup pages
     // ------------------------------------------------------------
-
     if (
       isAuthenticated &&
       isPublicRoute
     ) {
-
-      router.replace("/");
-
+      try {
+        router.replace("/");
+      } catch {}
       return;
     }
 
   }, [
+    isMounted,
     isAuthenticated,
     isLoading,
     pathname,

@@ -6,6 +6,7 @@ import {
   ExternalLink,
   Download,
   FileText,
+  Image as ImageIcon,
   Loader2,
   AlertCircle,
   CheckCircle2,
@@ -41,6 +42,12 @@ export default function PdfViewerModal({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const isImage = Boolean(
+    file?.type?.startsWith("image/") ||
+    (filename && /\.(png|jpe?g|webp)$/i.test(filename)) ||
+    (url && /\.(png|jpe?g|webp)$/i.test(url.split("?")[0]))
+  );
+
   useEffect(() => {
     if (!isOpen) {
       if (pdfUrl && !url) {
@@ -72,7 +79,7 @@ export default function PdfViewerModal({
           }
         } catch {
           if (!isCancelled) {
-            setError("Failed to open local PDF file.");
+            setError(isImage ? "Failed to open local image file." : "Failed to open local PDF file.");
             setLoading(false);
           }
         }
@@ -98,8 +105,10 @@ export default function PdfViewerModal({
           const res = await fetch(url, { headers: authHeaders });
           if (res.ok) {
             const blob = await res.blob();
+            const cType = res.headers.get("content-type") || "";
+            const mimeType = cType || (isImage ? "image/png" : "application/pdf");
             const blobUrl = URL.createObjectURL(
-              new Blob([blob], { type: "application/pdf" })
+              new Blob([blob], { type: mimeType })
             );
             objectUrlToCleanup = blobUrl;
             if (!isCancelled) {
@@ -147,12 +156,18 @@ export default function PdfViewerModal({
               // Direct binary stream
               if (
                 cType.includes("application/pdf") ||
+                cType.includes("image/") ||
                 cType.includes("octet-stream") ||
                 cType.includes("binary")
               ) {
                 const blob = await res.blob();
+                const mimeType = cType.includes("image/")
+                  ? cType
+                  : isImage
+                    ? "image/png"
+                    : "application/pdf";
                 const blobUrl = URL.createObjectURL(
-                  new Blob([blob], { type: "application/pdf" })
+                  new Blob([blob], { type: mimeType })
                 );
                 objectUrlToCleanup = blobUrl;
                 if (!isCancelled) {
@@ -191,8 +206,10 @@ export default function PdfViewerModal({
                       const fileRes = await fetch(foundUrl);
                       if (fileRes.ok) {
                         const fileBlob = await fileRes.blob();
+                        const fileCType = fileRes.headers.get("content-type") || "";
+                        const mimeType = fileCType || (isImage ? "image/png" : "application/pdf");
                         const blobUrl = URL.createObjectURL(
-                          new Blob([fileBlob], { type: "application/pdf" })
+                          new Blob([fileBlob], { type: mimeType })
                         );
                         objectUrlToCleanup = blobUrl;
                         if (!isCancelled) {
@@ -213,7 +230,7 @@ export default function PdfViewerModal({
                   return;
                 }
 
-                // 2. Check for base64 encoded PDF
+                // 2. Check for base64 encoded PDF or image
                 const base64Data =
                   data?.base64 ||
                   data?.file_content ||
@@ -224,7 +241,7 @@ export default function PdfViewerModal({
                 if (base64Data && typeof base64Data === "string") {
                   try {
                     const cleanBase64 = base64Data.replace(
-                      /^data:application\/pdf;base64,/,
+                      /^data:(application\/pdf|image\/[a-zA-Z+]+);base64,/,
                       ""
                     );
                     const byteCharacters = atob(cleanBase64);
@@ -234,7 +251,7 @@ export default function PdfViewerModal({
                     }
                     const byteArray = new Uint8Array(byteNumbers);
                     const blob = new Blob([byteArray], {
-                      type: "application/pdf",
+                      type: isImage ? "image/png" : "application/pdf",
                     });
                     const blobUrl = URL.createObjectURL(blob);
                     objectUrlToCleanup = blobUrl;
@@ -245,7 +262,7 @@ export default function PdfViewerModal({
                     }
                     return;
                   } catch (decodeErr) {
-                    console.warn("Failed to decode base64 PDF:", decodeErr);
+                    console.warn("Failed to decode base64 document:", decodeErr);
                   }
                 }
 
@@ -266,11 +283,11 @@ export default function PdfViewerModal({
           return;
         } catch (err) {
           if (!isCancelled) {
-            console.error("PDF load error:", err);
+            console.error("Document load error:", err);
             setError(
               err instanceof Error
                 ? err.message
-                : "Unable to load PDF from server."
+                : "Unable to load document from server."
             );
             setLoading(false);
           }
@@ -292,7 +309,7 @@ export default function PdfViewerModal({
         URL.revokeObjectURL(objectUrlToCleanup);
       }
     };
-  }, [isOpen, file, documentId, url]);
+  }, [isOpen, file, documentId, url, isImage]);
 
   // Handle escape key
   useEffect(() => {
@@ -312,7 +329,7 @@ export default function PdfViewerModal({
     if (!pdfUrl) return;
     const a = document.createElement("a");
     a.href = pdfUrl;
-    a.download = filename || "document.pdf";
+    a.download = filename || (isImage ? "image.png" : "document.pdf");
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -329,15 +346,35 @@ export default function PdfViewerModal({
         {/* Header */}
         <header className="flex h-14 shrink-0 items-center justify-between border-b border-zinc-200 bg-zinc-50/90 px-4 sm:px-6">
           <div className="flex min-w-0 items-center gap-3">
-            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-red-50 text-red-600 border border-red-100">
-              <FileText className="h-4 w-4" />
+            <div
+              className={`
+                flex
+                h-8
+                w-8
+                shrink-0
+                items-center
+                justify-center
+                rounded-lg
+                border
+                ${
+                  isImage
+                    ? "border-blue-100 bg-blue-50 text-blue-600"
+                    : "border-red-100 bg-red-50 text-red-600"
+                }
+              `}
+            >
+              {isImage ? (
+                <ImageIcon className="h-4 w-4" />
+              ) : (
+                <FileText className="h-4 w-4" />
+              )}
             </div>
             <div className="min-w-0">
               <h2 className="truncate text-sm font-semibold text-zinc-900">
-                {filename || documentMetadata?.file_name || "PDF Document"}
+                {filename || documentMetadata?.file_name || (isImage ? "Image" : "PDF Document")}
               </h2>
               <span className="text-[11px] text-zinc-500 font-normal">
-                {pdfUrl ? "Document Preview" : "Indexed Knowledge Document"}
+                {pdfUrl ? (isImage ? "Image Preview" : "Document Preview") : "Indexed Knowledge Document"}
               </span>
             </div>
           </div>
@@ -359,7 +396,7 @@ export default function PdfViewerModal({
                   type="button"
                   onClick={handleDownload}
                   className="flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 shadow-2xs hover:bg-zinc-100 hover:text-zinc-900 transition"
-                  title="Download PDF"
+                  title={isImage ? "Download image" : "Download PDF"}
                 >
                   <Download className="h-3.5 w-3.5" />
                   <span className="hidden sm:inline">Download</span>
@@ -384,7 +421,7 @@ export default function PdfViewerModal({
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-white/90 z-10">
               <Loader2 className="h-8 w-8 animate-spin text-zinc-600" />
               <p className="text-sm font-medium text-zinc-600">
-                Loading PDF document...
+                {isImage ? "Loading image..." : "Loading PDF document..."}
               </p>
             </div>
           )}
@@ -395,7 +432,7 @@ export default function PdfViewerModal({
                 <AlertCircle className="h-6 w-6" />
               </div>
               <h3 className="text-base font-semibold text-zinc-900 mb-1">
-                Unable to open PDF
+                {isImage ? "Unable to open image" : "Unable to open PDF"}
               </h3>
               <p className="text-sm text-zinc-500 max-w-md mb-4">{error}</p>
               <button
@@ -408,45 +445,56 @@ export default function PdfViewerModal({
             </div>
           )}
 
-          {/* Direct Embedded PDF object / iframe */}
+          {/* Embedded PDF object / iframe or Image */}
           {pdfUrl && !loading && !error && (
-            <div className="relative h-full w-full bg-zinc-900 flex flex-col">
-              <object
-                data={`${pdfUrl}#toolbar=1&navpanes=1`}
-                type="application/pdf"
-                className="h-full w-full border-0 bg-white"
-              >
-                <iframe
-                  src={`${pdfUrl}#toolbar=1&navpanes=1`}
+            isImage ? (
+              <div className="relative h-full w-full bg-zinc-950 flex items-center justify-center p-4 overflow-auto">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={pdfUrl}
+                  alt={filename || "Image Preview"}
+                  className="max-h-full max-w-full object-contain rounded-lg shadow-md"
+                />
+              </div>
+            ) : (
+              <div className="relative h-full w-full bg-zinc-900 flex flex-col">
+                <object
+                  data={`${pdfUrl}#toolbar=1&navpanes=1`}
+                  type="application/pdf"
                   className="h-full w-full border-0 bg-white"
-                  title={filename || "PDF Preview"}
                 >
-                  <div className="flex h-full flex-col items-center justify-center p-6 text-center text-zinc-700 bg-zinc-50">
-                    <FileText className="h-10 w-10 text-red-500 mb-3" />
-                    <p className="text-sm font-semibold mb-2">PDF Document Ready</p>
-                    <p className="text-xs text-zinc-500 mb-4">
-                      Click below to open or download the PDF in your browser.
-                    </p>
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        onClick={handleOpenNewTab}
-                        className="rounded-lg bg-zinc-900 px-4 py-2 text-xs font-medium text-white hover:bg-zinc-800 transition shadow-xs"
-                      >
-                        Open in New Tab
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleDownload}
-                        className="rounded-lg border border-zinc-300 bg-white px-4 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-100 transition shadow-xs"
-                      >
-                        Download
-                      </button>
+                  <iframe
+                    src={`${pdfUrl}#toolbar=1&navpanes=1`}
+                    className="h-full w-full border-0 bg-white"
+                    title={filename || "PDF Preview"}
+                  >
+                    <div className="flex h-full flex-col items-center justify-center p-6 text-center text-zinc-700 bg-zinc-50">
+                      <FileText className="h-10 w-10 text-red-500 mb-3" />
+                      <p className="text-sm font-semibold mb-2">PDF Document Ready</p>
+                      <p className="text-xs text-zinc-500 mb-4">
+                        Click below to open or download the PDF in your browser.
+                      </p>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={handleOpenNewTab}
+                          className="rounded-lg bg-zinc-900 px-4 py-2 text-xs font-medium text-white hover:bg-zinc-800 transition shadow-xs"
+                        >
+                          Open in New Tab
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleDownload}
+                          className="rounded-lg border border-zinc-300 bg-white px-4 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-100 transition shadow-xs"
+                        >
+                          Download
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                </iframe>
-              </object>
-            </div>
+                  </iframe>
+                </object>
+              </div>
+            )
           )}
 
           {/* Document Metadata / Knowledge Base Overview Card */}

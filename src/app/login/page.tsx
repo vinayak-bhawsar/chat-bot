@@ -6,9 +6,10 @@ import {
   Eye,
   EyeOff,
   Sparkles,
+  User,
 } from "lucide-react";
 
-import { apiRequest } from "@/lib/api";
+import { apiRequest, clearTokens } from "@/lib/api";
 import { getLocalizedErrorMessage } from "@/i18n";
 
 interface LoginResponse {
@@ -96,6 +97,11 @@ export default function LoginPage() {
     } finally {
       setLoading(false);
     }
+  }
+
+  function handleContinueAsGuest() {
+    clearTokens();
+    window.location.href = "/";
   }
 
   return (
@@ -392,6 +398,53 @@ export default function LoginPage() {
 
             </form>
 
+            {/* ================================================= */}
+            {/* Divider */}
+            {/* ================================================= */}
+
+            <div className="relative my-5 flex items-center justify-center">
+              <div className="w-full border-t border-zinc-200" />
+              <span className="absolute bg-white px-3 text-xs font-medium uppercase tracking-wider text-zinc-400">
+                or
+              </span>
+            </div>
+
+            {/* ================================================= */}
+            {/* Continue as Guest Button */}
+            {/* ================================================= */}
+
+            <button
+              type="button"
+              onClick={handleContinueAsGuest}
+              disabled={loading}
+              className="
+                flex
+                h-11.5
+                w-full
+                items-center
+                justify-center
+                gap-2
+                rounded-lg
+                border
+                border-zinc-300
+                bg-white
+                px-4
+                text-sm
+                font-medium
+                text-zinc-700
+                shadow-2xs
+                transition
+                hover:border-zinc-400
+                hover:bg-zinc-50
+                hover:text-zinc-900
+                active:bg-zinc-100
+                disabled:cursor-not-allowed
+                disabled:opacity-60
+              "
+            >
+              <User className="h-4 w-4 text-zinc-500" />
+              <span>Continue as Guest</span>
+            </button>
 
             {/* ================================================= */}
             {/* Signup */}

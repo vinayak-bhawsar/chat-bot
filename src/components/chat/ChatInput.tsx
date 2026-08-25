@@ -11,7 +11,9 @@ import {
   ArrowUp,
   Eye,
   FileText,
+  Image as ImageIcon,
   Loader2,
+  LogIn,
   Paperclip,
   Square,
   X,
@@ -37,6 +39,7 @@ interface ChatInputProps {
   onRemoveFile: () => void;
   onSubmit: (message: string) => void;
   isStreaming?: boolean;
+  isAuthenticated?: boolean;
 }
 
 // ================================================================
@@ -51,12 +54,14 @@ export default function ChatInput({
   onRemoveFile,
   onSubmit,
   isStreaming = false,
+  isAuthenticated = false,
 }: ChatInputProps) {
   const [message, setMessage] = useState("");
+  const [authModalOpen, setAuthModalOpen] = useState(false);
 
   /*
    * Local file state.
-   * This is used to show the PDF immediately
+   * This is used to show the attached file immediately
    * while the upload request is running.
    */
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -72,7 +77,7 @@ export default function ChatInput({
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
       const scrollHeight = textareaRef.current.scrollHeight;
-      textareaRef.current.style.height = `${Math.min(Math.max(scrollHeight, 24), 160)}px`;
+      textareaRef.current.style.height = `${Math.min(Math.max(scrollHeight, 34), 160)}px`;
     }
   }, [message]);
 
@@ -111,6 +116,27 @@ export default function ChatInput({
     uploadedDocument || selectedFile
   );
 
+  const isImageAttachment = Boolean(
+    (selectedFile?.type && selectedFile.type.startsWith("image/")) ||
+    (uploadedDocument?.file?.type && uploadedDocument.file.type.startsWith("image/")) ||
+    (displayFilename && /\.(png|jpe?g|webp)$/i.test(displayFilename))
+  );
+
+  // ==============================================================
+  // Attachment Click (Guard for guests)
+  // ==============================================================
+
+  const handleAttachmentClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+
+    if (!isAuthenticated) {
+      setAuthModalOpen(true);
+      return;
+    }
+
+    fileInputRef.current?.click();
+  };
+
   // ==============================================================
   // File Upload
   // ==============================================================
@@ -124,15 +150,33 @@ export default function ChatInput({
       return;
     }
 
-    const isPDF =
-      file.type === "application/pdf" ||
-      file.name.toLowerCase().endsWith(".pdf");
+    if (!isAuthenticated) {
+      setAuthModalOpen(true);
+      event.target.value = "";
+      return;
+    }
 
-    if (!isPDF) {
+    const fileType = file.type ? file.type.toLowerCase() : "";
+    const fileName = file.name.toLowerCase();
+
+    const isPdf =
+      fileType === "application/pdf" ||
+      (!fileType && fileName.endsWith(".pdf"));
+
+    const isImage =
+      fileType === "image/png" ||
+      fileType === "image/jpeg" ||
+      fileType === "image/webp" ||
+      fileType.startsWith("image/") ||
+      (!fileType && /\.(png|jpe?g|webp)$/i.test(fileName));
+
+    const isAllowed = isPdf || isImage;
+
+    if (!isAllowed) {
       alert(
         getLocalizedErrorMessage(
           "UNSUPPORTED_MEDIA_TYPE",
-          "Please upload a PDF file."
+          "Please upload a PDF or supported image file (PNG, JPG, JPEG, WEBP)."
         )
       );
 
@@ -176,10 +220,23 @@ export default function ChatInput({
   };
 
   // ==============================================================
+  // Send Button State
+  // ==============================================================
+
+  const canSend =
+    !isUploading &&
+    !isStreaming &&
+    (message.trim().length > 0 || hasAttachment);
+
+  // ==============================================================
   // Submit
   // ==============================================================
 
   const submitMessage = () => {
+    if (!canSend) {
+      return;
+    }
+
     const trimmedMessage = message.trim();
 
     if (!trimmedMessage && !hasAttachment) {
@@ -211,7 +268,9 @@ export default function ChatInput({
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    submitMessage();
+    if (canSend) {
+      submitMessage();
+    }
   };
 
   const handleKeyDown = (
@@ -228,15 +287,6 @@ export default function ChatInput({
       }
     }
   };
-
-  // ==============================================================
-  // Send Button State
-  // ==============================================================
-
-  const canSend =
-    !isUploading &&
-    !isStreaming &&
-    (message.trim().length > 0 || hasAttachment);
 
   // ==============================================================
   // Render
@@ -264,7 +314,7 @@ export default function ChatInput({
         "
       >
         {/* ======================================================
-            PDF PREVIEW
+            ATTACHMENT PREVIEW (Authenticated only)
         ====================================================== */}
 
         {hasAttachment && displayFilename && (
@@ -285,7 +335,7 @@ export default function ChatInput({
           >
             <div className="flex min-w-0 items-center gap-2.5">
               <div
-                className="
+                className={`
                   flex
                   h-8
                   w-8
@@ -294,12 +344,22 @@ export default function ChatInput({
                   justify-center
                   rounded-lg
                   border
-                  border-red-100
-                  bg-red-50
-                  text-red-600
-                "
+                  ${
+                    isUploading
+                      ? "border-amber-100 bg-amber-50 text-amber-600"
+                      : isImageAttachment
+                        ? "border-blue-100 bg-blue-50 text-blue-600"
+                        : "border-red-100 bg-red-50 text-red-600"
+                  }
+                `}
               >
-                <FileText className="h-4 w-4" />
+                {isUploading ? (
+                  <Loader2 className="h-4 w-4 animate-spin text-amber-600" />
+                ) : isImageAttachment ? (
+                  <ImageIcon className="h-4 w-4" />
+                ) : (
+                  <FileText className="h-4 w-4" />
+                )}
               </div>
 
               <div className="min-w-0">
@@ -309,12 +369,18 @@ export default function ChatInput({
 
                 <p className="text-[11px] text-zinc-500">
                   {isUploading
-                    ? "Uploading document..."
+                    ? isImageAttachment
+                      ? "Uploading image..."
+                      : "Uploading document..."
                     : isStreaming
                       ? "Processing..."
                       : uploadedDocument?.documentId
-                        ? "Stored document attached • Ready to chat"
-                        : "PDF attached • Ready to send"}
+                        ? isImageAttachment
+                          ? "Stored image attached • Ready to chat"
+                          : "Stored document attached • Ready to chat"
+                        : isImageAttachment
+                          ? "Image attached • Ready to send"
+                          : "PDF attached • Ready to send"}
                 </p>
               </div>
             </div>
@@ -353,7 +419,7 @@ export default function ChatInput({
                   hover:bg-zinc-200
                   hover:text-zinc-900
                 "
-                title="Open and preview PDF"
+                title={isImageAttachment ? "Open and preview image" : "Open and preview PDF"}
               >
                 <Eye className="h-3.5 w-3.5" />
                 <span className="hidden sm:inline">Preview</span>
@@ -390,28 +456,33 @@ export default function ChatInput({
             INPUT ROW
         ====================================================== */}
 
-        <div className="flex min-h-[38px] items-end gap-1.5 sm:gap-2">
+        <div className="flex items-end gap-1.5 sm:gap-2">
           {/* ====================================================
               Attachment Button
           ==================================================== */}
 
           <button
             type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              fileInputRef.current?.click();
-            }}
+            onClick={handleAttachmentClick}
             disabled={isUploading || isStreaming}
-            aria-label="Attach PDF"
+            aria-label={
+              isAuthenticated
+                ? "Attach document or image"
+                : "Sign in to attach files"
+            }
+            title={
+              isAuthenticated
+                ? "Attach document or image"
+                : "Sign in to attach files"
+            }
             className="
-              mb-0.5
               flex
-              h-8
-              w-8
+              h-[34px]
+              w-[34px]
               shrink-0
               items-center
               justify-center
-              rounded-lg
+              rounded-xl
               text-zinc-500
               transition-colors
               hover:bg-zinc-100
@@ -430,7 +501,7 @@ export default function ChatInput({
           <input
             ref={fileInputRef}
             type="file"
-            accept="application/pdf,.pdf"
+            accept=".pdf,application/pdf,image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp"
             onChange={handleFileSelect}
             className="hidden"
           />
@@ -447,22 +518,24 @@ export default function ChatInput({
             disabled={isStreaming}
             placeholder={
               hasAttachment
-                ? "Ask something about this PDF..."
+                ? isImageAttachment
+                  ? "Ask something about this image..."
+                  : "Ask something about this PDF..."
                 : "Message AI Chat..."
             }
             rows={1}
             className="
               max-h-40
-              min-h-[26px]
+              min-h-[34px]
               flex-1
               resize-none
               bg-transparent
               px-2
-              py-1
+              py-[6px]
               font-sans
               text-[15px]
               font-normal
-              leading-6
+              leading-[22px]
               text-zinc-900
               outline-none
               placeholder:font-normal
@@ -489,14 +562,13 @@ export default function ChatInput({
                   : "Send message"
             }
             className={`
-              mb-0.5
               flex
-              h-8
-              w-8
+              h-[34px]
+              w-[34px]
               shrink-0
               items-center
               justify-center
-              rounded-lg
+              rounded-xl
               transition-all
               duration-150
 
@@ -529,6 +601,88 @@ export default function ChatInput({
       <p className="mt-2 text-center text-[11px] text-zinc-400">
         AI Chat can make mistakes. Please check important information.
       </p>
+
+      {/* ========================================================
+          AUTH REQUIRED MODAL (When guest tries to upload document)
+      ======================================================== */}
+
+      {authModalOpen && (
+        <div
+          className="
+            fixed
+            inset-0
+            z-[100]
+            flex
+            items-center
+            justify-center
+            bg-black/40
+            px-4
+            backdrop-blur-xs
+          "
+          onClick={() => setAuthModalOpen(false)}
+          role="presentation"
+        >
+          <div
+            className="
+              w-full
+              max-w-md
+              rounded-2xl
+              border
+              border-zinc-200
+              bg-white
+              p-6
+              shadow-2xl
+            "
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="flex items-start justify-between">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600 border border-indigo-100">
+                <FileText className="h-5 w-5" />
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setAuthModalOpen(false)}
+                className="flex h-8 w-8 items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="mt-4">
+              <h3 className="text-base font-semibold text-zinc-900">
+                Sign in to attach files
+              </h3>
+              <p className="mt-2 text-sm text-zinc-600 leading-relaxed">
+                Guest users can chat freely, but uploading and analyzing PDF documents or images with Vector RAG retrieval requires an account.
+              </p>
+            </div>
+
+            <div className="mt-6 flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => setAuthModalOpen(false)}
+                className="rounded-xl border border-zinc-200 px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
+              >
+                Continue as Guest
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  window.location.href = "/login";
+                }}
+                className="flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-xs hover:bg-indigo-700"
+              >
+                <LogIn className="h-4 w-4" />
+                Sign In
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
