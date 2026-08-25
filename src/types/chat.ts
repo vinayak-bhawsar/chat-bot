@@ -1,5 +1,5 @@
 export interface ChatAttachment {
-  type: "pdf" | string;
+  type: "pdf" | "image" | string;
   documentId?: string;
   filename: string;
   file?: File;

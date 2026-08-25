@@ -222,6 +222,10 @@ export function clearTokens(): void {
   localStorage.removeItem(
     "refresh_token"
   );
+
+  localStorage.removeItem(
+    "active_conversation_id"
+  );
 }
 
 // ================================================================
@@ -652,7 +656,7 @@ async function performApiRequest<T>(
   }
 
   // ==============================================================
-  // First Request
+  // First Request (with automatic 1.2s retry on network drop/Render wake-up)
   // ==============================================================
 
   let response: Response;
@@ -667,12 +671,21 @@ async function performApiRequest<T>(
         }
       );
   } catch (networkErr) {
-    console.error("Network request failed:", networkErr);
-    throw new ApiError(
-      getLocalizedErrorMessage("NETWORK_ERROR"),
-      0,
-      "NETWORK_ERROR"
-    );
+    console.warn("Initial network request failed, retrying in 1.2s...", networkErr);
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+      response = await fetch(`${API_URL}${endpoint}`, {
+        ...options,
+        headers,
+      });
+    } catch (retryErr) {
+      console.warn("Network request failed after retry:", retryErr);
+      throw new ApiError(
+        getLocalizedErrorMessage("NETWORK_ERROR"),
+        0,
+        "NETWORK_ERROR"
+      );
+    }
   }
 
   // ==============================================================

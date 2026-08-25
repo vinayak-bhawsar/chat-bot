@@ -16,7 +16,9 @@ import {
   FileText,
   Folder,
   FolderPlus,
+  Image as ImageIcon,
   Loader2,
+  LogIn,
   Trash2,
   Upload,
   X,
@@ -709,7 +711,26 @@ export default function DocumentsSection({
     if (
       item.mime_type
         ?.toLowerCase()
-        .includes("pdf")
+        .includes("image") ||
+      /\.(png|jpe?g|webp)$/i.test(item.file_name)
+    ) {
+      return (
+        <ImageIcon
+          className="
+            h-4
+            w-4
+            shrink-0
+            text-blue-500
+          "
+        />
+      );
+    }
+
+    if (
+      item.mime_type
+        ?.toLowerCase()
+        .includes("pdf") ||
+      item.file_name.toLowerCase().endsWith(".pdf")
     ) {
       return (
         <FileText
@@ -1166,9 +1187,29 @@ export default function DocumentsSection({
                 Empty
                 ================================================== */}
 
-            {!isLoading &&
-              documents.length ===
-              0 ? (
+            {!isAuthenticated ? (
+              <div className="px-3 py-5 text-center">
+                <div className="mx-auto mb-2 flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600 border border-indigo-100">
+                  <FileText className="h-4 w-4" />
+                </div>
+                <p className="text-xs font-semibold text-zinc-800">
+                  Sign in required
+                </p>
+                <p className="mt-1 text-[11px] text-zinc-500 leading-snug">
+                  Knowledge Documents and PDF analysis require an account.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    window.location.href = "/login";
+                  }}
+                  className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white shadow-2xs hover:bg-indigo-700 transition-colors"
+                >
+                  <LogIn className="h-3.5 w-3.5" />
+                  Sign In
+                </button>
+              </div>
+            ) : !isLoading && documents.length === 0 ? (
               <div
                 className="
                   px-3

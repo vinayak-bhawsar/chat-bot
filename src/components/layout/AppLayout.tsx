@@ -4,6 +4,7 @@ import {
   useEffect,
   useState,
 } from "react";
+import { useRouter, usePathname, useParams } from "next/navigation";
 
 import {
   Menu,
@@ -18,6 +19,12 @@ import MainContent from "@/components/chat/MainContent";
 import { Conversation } from "@/types/chat";
 import { apiRequest } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
+import {
+  saveAttachmentMetadata,
+  getStoredAttachmentMetadata,
+  clearAttachmentMetadata,
+  migrateAttachmentMetadata,
+} from "@/lib/attachmentStorage";
 
 // ================================================================
 // Backend Types
@@ -246,6 +253,14 @@ function getMessageId(
   );
 }
 
+function getMessageRole(message: any): "user" | "assistant" {
+  const r = String(message.role || message.sender || message.type || "").toLowerCase();
+  if (r === "user" || r === "human" || r === "client") {
+    return "user";
+  }
+  return "assistant";
+}
+
 // ================================================================
 // Message Content
 // ================================================================
@@ -258,6 +273,75 @@ function getMessageContent(
     message.text_content ??
     ""
   );
+}
+
+// ================================================================
+// Extract Attachment From Backend Message
+// ================================================================
+
+function extractAttachmentFromMessage(
+  message: any
+): Conversation["messages"][0]["attachment"] | undefined {
+  const rawAtt = message.attachment || message.metadata?.attachment;
+
+  const docId =
+    (typeof rawAtt === "object"
+      ? rawAtt?.document_id || rawAtt?.documentId || rawAtt?.id
+      : null) ||
+    message.document_id ||
+    message.documentId ||
+    message.metadata?.document_id ||
+    message.metadata?.documentId ||
+    null;
+
+  const docName =
+    (typeof rawAtt === "object"
+      ? rawAtt?.filename || rawAtt?.file_name || rawAtt?.name || rawAtt?.document_name
+      : null) ||
+    message.filename ||
+    message.file_name ||
+    message.document_name ||
+    message.metadata?.filename ||
+    message.metadata?.file_name ||
+    message.metadata?.document_name ||
+    null;
+
+  const docUrl =
+    (typeof rawAtt === "object"
+      ? rawAtt?.url || rawAtt?.file_url || rawAtt?.download_url
+      : null) ||
+    message.url ||
+    message.file_url ||
+    message.metadata?.url ||
+    message.metadata?.file_url ||
+    null;
+
+  const mimeType =
+    (typeof rawAtt === "object"
+      ? rawAtt?.mime_type || rawAtt?.contentType || rawAtt?.type
+      : null) ||
+    message.mime_type ||
+    message.content_type ||
+    message.metadata?.mime_type ||
+    null;
+
+  if (!docId && !docName && !docUrl) {
+    return undefined;
+  }
+
+  const isImageAttachment = Boolean(
+    (typeof mimeType === "string" && mimeType.startsWith("image/")) ||
+    (typeof rawAtt === "object" && rawAtt?.type === "image") ||
+    (docName && /\.(png|jpe?g|webp|gif|svg|bmp)$/i.test(docName)) ||
+    (docUrl && /\.(png|jpe?g|webp|gif|svg|bmp)$/i.test(docUrl.split("?")[0]))
+  );
+
+  return {
+    type: isImageAttachment ? "image" : "pdf",
+    documentId: docId ? String(docId).trim() : undefined,
+    filename: String(docName || (isImageAttachment ? "image.png" : "document.pdf")).trim(),
+    url: docUrl ? String(docUrl).trim() : undefined,
+  };
 }
 
 // ================================================================
@@ -303,6 +387,7 @@ function getErrorStatus(
 
 interface AppLayoutProps {
   children?: React.ReactNode;
+  initialConversationId?: string;
 }
 
 // ================================================================
@@ -617,14 +702,28 @@ function DeleteConversationModal({
 
 function AppLayoutContent({
   children,
+  initialConversationId,
 }: AppLayoutProps) {
   const {
     isAuthenticated,
   } = useAuth();
 
+  const router = useRouter();
+  const pathname = usePathname();
+  const params = useParams();
+
+  const routeConversationId =
+    (params?.id as string) || initialConversationId || null;
+
   // ==============================================================
   // State
   // ==============================================================
+
+  const [isMounted, setIsMounted] = useState(false);
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
 
   const [
     mobileSidebarOpen,
@@ -634,15 +733,23 @@ function AppLayoutContent({
   const [
     conversations,
     setConversations,
-  ] = useState<Conversation[]>(
-    []
+  ] = useState<Conversation[]>(() =>
+    routeConversationId
+      ? [
+          {
+            id: routeConversationId,
+            title: "Chat",
+            messages: [],
+          },
+        ]
+      : []
   );
 
   const [
     activeConversationId,
     setActiveConversationId,
   ] = useState<string | null>(
-    null
+    routeConversationId
   );
 
   /*
@@ -668,6 +775,13 @@ function AppLayoutContent({
   ] = useState<string | null>(
     null
   );
+
+  // Load active conversation history immediately if on /c/[id]
+  useEffect(() => {
+    if (routeConversationId && isAuthenticated) {
+      void loadConversationHistory(routeConversationId);
+    }
+  }, [routeConversationId, isAuthenticated]);
 
   // ==============================================================
   // LOAD CONVERSATIONS
@@ -765,15 +879,47 @@ function AppLayoutContent({
                 messages: [],
               }
             );
+
+            if (docId && typeof window !== "undefined") {
+              const isDocImage = Boolean(
+                docName && /\.(png|jpe?g|webp)$/i.test(docName)
+              );
+              saveAttachmentMetadata(id, {
+                type: isDocImage ? "image" : "pdf",
+                documentId: docId,
+                filename: docName || (isDocImage ? "image.png" : "document.pdf"),
+                index: 0,
+              });
+            }
           }
 
-          setConversations(
-            validConversations
-          );
+          setConversations((previous) => {
+            return validConversations.map((backendConv) => {
+              const existing = previous.find((p) => p.id === backendConv.id);
+              if (existing && existing.messages.length > 0) {
+                return {
+                  ...backendConv,
+                  messages: existing.messages,
+                };
+              }
+              return backendConv;
+            });
+          });
 
-          setActiveConversationId(
-            null
-          );
+          if (routeConversationId) {
+            setActiveConversationId(routeConversationId);
+            void loadConversationHistory(routeConversationId);
+          } else if (typeof window !== "undefined" && window.location.pathname === "/") {
+            setActiveConversationId(null);
+          } else if (typeof window !== "undefined") {
+            const savedActiveId = localStorage.getItem("active_conversation_id");
+            if (savedActiveId && validConversations.some((c) => c.id === savedActiveId)) {
+              setActiveConversationId(savedActiveId);
+              void loadConversationHistory(savedActiveId);
+            } else {
+              setActiveConversationId(null);
+            }
+          }
         } catch (error) {
           if (cancelled) {
             return;
@@ -811,7 +957,35 @@ function AppLayoutContent({
     };
   }, [
     isAuthenticated,
+    routeConversationId,
   ]);
+
+  // ==============================================================
+  // ROUTE & URL SYNC (Browser Back / Forward navigation)
+  // ==============================================================
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      return;
+    }
+
+    if (routeConversationId) {
+      if (activeConversationId !== routeConversationId) {
+        setActiveConversationId(routeConversationId);
+        setConversations((previous) => {
+          const existing = previous.find((c) => c.id === routeConversationId);
+          if (!existing || existing.messages.length === 0) {
+            void loadConversationHistory(routeConversationId);
+          }
+          return previous;
+        });
+      }
+    } else if (pathname === "/") {
+      if (activeConversationId !== null && !activeConversationId.startsWith("temp-")) {
+        setActiveConversationId(null);
+      }
+    }
+  }, [routeConversationId, pathname, isAuthenticated]);
 
   // ==============================================================
   // CREATE NEW CHAT
@@ -842,37 +1016,40 @@ function AppLayoutContent({
             false
           );
 
+          if (isMounted && pathname !== "/") {
+            try {
+              router.push("/");
+            } catch {}
+          }
+
           return activeConversation.id;
         }
       }
 
-      const newConversation:
-        Conversation = {
-        id:
-          crypto.randomUUID(),
-
-        title:
-          "New Chat",
-
-        messages: [],
-      };
-
-      setConversations(
-        (previous) => [
-          newConversation,
-          ...previous,
-        ]
-      );
-
       setActiveConversationId(
-        newConversation.id
+        null
       );
+
+      if (typeof window !== "undefined") {
+        if (isAuthenticated) {
+          localStorage.removeItem("active_conversation_id");
+        }
+        localStorage.removeItem("active_document_id");
+        localStorage.removeItem("active_document_name");
+        localStorage.removeItem("selected_document_id");
+      }
 
       setMobileSidebarOpen(
         false
       );
 
-      return newConversation.id;
+      if (isMounted && pathname !== "/") {
+        try {
+          router.push("/");
+        } catch {}
+      }
+
+      return "";
     };
 
   // ==============================================================
@@ -897,33 +1074,39 @@ function AppLayoutContent({
       return;
     }
 
-    setConversations(
-      (previous) =>
-        previous.map(
-          (
-            conversation
-          ) => {
-            if (
-              conversation.id !==
-              conversationId
-            ) {
-              return conversation;
-            }
+    setConversations((previous) => {
+      const exists = previous.some((c) => c.id === conversationId);
+      const existingConv = previous.find((c) => c.id === conversationId);
+      const messages =
+        typeof updater === "function"
+          ? updater(existingConv ? existingConv.messages : [])
+          : updater;
 
-            const messages =
-              typeof updater ===
-              "function"
-                ? updater(
-                    conversation.messages
-                  )
-                : updater;
+      if (!exists) {
+        return [
+          {
+            id: conversationId,
+            title: "New Chat",
+            messages,
+          },
+          ...previous,
+        ];
+      }
 
-            return {
-              ...conversation,
-              messages,
-            };
-          }
-        )
+      return previous.map((conversation) => {
+        if (conversation.id !== conversationId) {
+          return conversation;
+        }
+
+        return {
+          ...conversation,
+          messages,
+        };
+      });
+    });
+
+    setActiveConversationId((currentId) =>
+      currentId === null || currentId === "" ? conversationId : currentId
     );
   };
 
@@ -943,11 +1126,6 @@ function AppLayoutContent({
           "string" ||
         !conversationId.trim()
       ) {
-        console.warn(
-          "Invalid conversation ID:",
-          conversationId
-        );
-
         return;
       }
 
@@ -955,38 +1133,6 @@ function AppLayoutContent({
         conversationId.trim();
 
       if (!isAuthenticated) {
-        return;
-      }
-
-      const conversation =
-        conversations.find(
-          (
-            item
-          ) =>
-            item.id ===
-            cleanConversationId
-        );
-
-      if (!conversation) {
-        console.warn(
-          "Conversation not found:",
-          cleanConversationId
-        );
-
-        return;
-      }
-
-      if (
-        conversation.messages
-          .length > 0
-      ) {
-        return;
-      }
-
-      if (
-        conversation.title ===
-        "New Chat"
-      ) {
         return;
       }
 
@@ -1010,96 +1156,121 @@ function AppLayoutContent({
           (response as any)?.data ||
           response;
 
+        const storedAttachments =
+          getStoredAttachmentMetadata(cleanConversationId);
+
+        const conversationFromList = conversations.find(
+          (item) => item.id === cleanConversationId
+        );
+
         const convDocId =
           responseData?.document_id ||
           responseData?.documentId ||
           (Array.isArray(responseData?.document_ids)
             ? responseData.document_ids[0]
             : null) ||
-          conversation.document_id ||
+          conversationFromList?.document_id ||
           null;
 
         const convDocName =
           responseData?.filename ||
           responseData?.file_name ||
           responseData?.document_name ||
-          conversation.document_name ||
+          conversationFromList?.document_name ||
           null;
 
-        const messages:
-          Conversation["messages"] =
-          backendMessages.map(
-            (
-              message: any
-            ) => {
-              const docId =
-                message.document_id ||
-                message.documentId ||
-                message.metadata?.document_id ||
-                message.attachment?.documentId ||
-                convDocId ||
-                null;
+        const hasExplicitDocOnAnyMessage = backendMessages.some(
+          (msg: any) =>
+            Boolean(
+              msg.document_id ||
+              msg.documentId ||
+              msg.metadata?.document_id ||
+              msg.metadata?.documentId ||
+              msg.attachment?.documentId ||
+              msg.attachment?.document_id ||
+              msg.attachment?.url ||
+              msg.url ||
+              msg.file_url
+            )
+        );
 
-              const docName =
-                message.filename ||
-                message.file_name ||
-                message.metadata?.filename ||
-                message.metadata?.file_name ||
-                message.attachment?.filename ||
-                convDocName ||
-                (docId ? "document.pdf" : null);
+        let userMsgCount = 0;
+        const totalUserMessages = backendMessages.filter(
+          (m: any) => getMessageRole(m) === "user"
+        ).length;
 
-              return {
-                id:
-                  getMessageId(
-                    message
-                  ),
+        const messages: Conversation["messages"] = backendMessages.map(
+          (message: any) => {
+            const role = getMessageRole(message);
+            const isUser = role === "user";
+            const userIndex = isUser ? userMsgCount++ : -1;
 
-                role:
-                  message.role,
+            const attachmentFromBackend = extractAttachmentFromMessage(message);
 
-                content:
-                  getMessageContent(
-                    message
-                  ),
+            const matchedStored = isUser
+              ? storedAttachments.find((s) => s.messageId && s.messageId === message.id) ||
+                storedAttachments.find((s) => s.index !== undefined && s.index === userIndex) ||
+                (userIndex === 0 && totalUserMessages === 1 && storedAttachments.length > 0 ? storedAttachments[0] : undefined)
+              : undefined;
 
-                attachment: docId
-                  ? {
-                      type: "pdf",
-                      documentId:
-                        String(docId).trim(),
-                      filename:
-                        String(
-                          docName ||
-                            "document.pdf"
-                        ).trim(),
-                    }
-                  : undefined,
-              };
-            }
-          );
+            const isImage = Boolean(
+              matchedStored?.type === "image" ||
+              attachmentFromBackend?.type === "image" ||
+              (matchedStored?.filename && /\.(png|jpe?g|webp|gif|svg|bmp)$/i.test(matchedStored.filename)) ||
+              (attachmentFromBackend?.filename && /\.(png|jpe?g|webp|gif|svg|bmp)$/i.test(attachmentFromBackend.filename))
+            );
+
+            const docId = matchedStored?.documentId || attachmentFromBackend?.documentId;
+            const docName = matchedStored?.filename || attachmentFromBackend?.filename;
+            const docUrl = matchedStored?.url || attachmentFromBackend?.url;
+
+            const attachment = (docId || docName || docUrl)
+              ? {
+                  type: isImage ? ("image" as const) : ("pdf" as const),
+                  documentId: docId,
+                  filename: docName || (isImage ? "image.png" : "document.pdf"),
+                  url: docUrl,
+                }
+              : undefined;
+
+            return {
+              id: getMessageId(message),
+              role,
+              content: getMessageContent(message),
+              attachment,
+            };
+          }
+        );
 
         setConversations(
-          (previous) =>
-            previous.map(
-              (item) => {
-                if (
-                  item.id !==
-                  cleanConversationId
-                ) {
-                  return item;
-                }
-
-                return {
-                  ...item,
-                  document_id:
-                    convDocId,
-                  document_name:
-                    convDocName,
+          (previous) => {
+            const exists = previous.some((c) => c.id === cleanConversationId);
+            if (!exists) {
+              return [
+                {
+                  id: cleanConversationId,
+                  title: responseData?.title || "New Chat",
+                  document_id: convDocId,
+                  document_name: convDocName,
                   messages,
-                };
+                },
+                ...previous,
+              ];
+            }
+
+            return previous.map((item) => {
+              if (item.id !== cleanConversationId) {
+                return item;
               }
-            )
+
+              return {
+                ...item,
+                document_id: convDocId,
+                document_name: convDocName,
+                messages,
+              };
+            });
+          }
         );
       } catch (error) {
         const status =
@@ -1128,6 +1299,12 @@ function AppLayoutContent({
                 ? null
                 : currentId
           );
+
+          if (isMounted && pathname === `/c/${cleanConversationId}`) {
+            try {
+              router.replace("/");
+            } catch {}
+          }
 
           return;
         }
@@ -1170,9 +1347,19 @@ function AppLayoutContent({
         cleanConversationId
       );
 
+      if (isAuthenticated && typeof window !== "undefined") {
+        localStorage.setItem("active_conversation_id", cleanConversationId);
+      }
+
       setMobileSidebarOpen(
         false
       );
+
+      if (isMounted && pathname !== `/c/${cleanConversationId}`) {
+        try {
+          router.push(`/c/${cleanConversationId}`);
+        } catch {}
+      }
 
       await loadConversationHistory(
         cleanConversationId
@@ -1364,11 +1551,26 @@ function AppLayoutContent({
 
         if (
           activeConversationId ===
-          conversationId
+          conversationId ||
+          pathname === `/c/${conversationId}`
         ) {
           setActiveConversationId(
             null
           );
+
+          if (isMounted && pathname !== "/") {
+            try {
+              router.replace("/");
+            } catch {}
+          }
+        }
+
+        if (isAuthenticated && typeof window !== "undefined") {
+          const currentActive = localStorage.getItem("active_conversation_id");
+          if (currentActive === conversationId) {
+            localStorage.removeItem("active_conversation_id");
+          }
+          clearAttachmentMetadata(conversationId);
         }
 
         // ----------------------------------------------------------
@@ -1414,11 +1616,26 @@ function AppLayoutContent({
 
           if (
             activeConversationId ===
-            conversationId
+            conversationId ||
+            pathname === `/c/${conversationId}`
           ) {
             setActiveConversationId(
               null
             );
+
+            if (isMounted && pathname !== "/") {
+              try {
+                router.replace("/");
+              } catch {}
+            }
+          }
+
+          if (isAuthenticated && typeof window !== "undefined") {
+            const currentActive = localStorage.getItem("active_conversation_id");
+            if (currentActive === conversationId) {
+              localStorage.removeItem("active_conversation_id");
+            }
+            clearAttachmentMetadata(conversationId);
           }
 
           setDeleteTargetId(null);
@@ -1497,13 +1714,23 @@ function AppLayoutContent({
         )
     );
 
-    setActiveConversationId(
-      (currentId) =>
-        currentId ===
-        temporaryId
-          ? backendId
-          : currentId
+    setActiveConversationId((currentId) =>
+      currentId === temporaryId || currentId === null ? backendId : currentId
     );
+
+    if (typeof window !== "undefined") {
+      try {
+        if (window.location.pathname !== `/c/${backendId}`) {
+          window.history.replaceState(null, "", `/c/${backendId}`);
+        }
+      } catch {
+        // Safe fallback if router dispatcher is still initializing
+      }
+      if (isAuthenticated) {
+        localStorage.setItem("active_conversation_id", backendId);
+        migrateAttachmentMetadata(temporaryId, backendId);
+      }
+    }
   };
 
   // ==============================================================
@@ -1768,6 +1995,7 @@ function AppLayoutContent({
 
 export default function AppLayout({
   children,
+  initialConversationId,
 }: AppLayoutProps) {
   const {
     isLoading:
@@ -1781,7 +2009,7 @@ export default function AppLayout({
   }
 
   return (
-    <AppLayoutContent>
+    <AppLayoutContent initialConversationId={initialConversationId}>
       {children}
     </AppLayoutContent>
   );
