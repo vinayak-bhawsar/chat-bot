@@ -82,7 +82,7 @@ export default function ChatInput({
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
       const scrollHeight = textareaRef.current.scrollHeight;
-      textareaRef.current.style.height = `${Math.min(Math.max(scrollHeight, 34), 160)}px`;
+      textareaRef.current.style.height = `${Math.min(Math.max(scrollHeight, 36), 160)}px`;
     }
   }, [message]);
 
@@ -481,8 +481,8 @@ export default function ChatInput({
             }
             className="
               flex
-              h-[34px]
-              w-[34px]
+              h-9
+              w-9
               shrink-0
               items-center
               justify-center
@@ -528,12 +528,12 @@ export default function ChatInput({
             rows={1}
             className="
               max-h-40
-              min-h-[34px]
+              min-h-[36px]
               flex-1
               resize-none
               bg-transparent
-              px-2
-              py-[6px]
+              px-2.5
+              py-[7px]
               font-sans
               text-[15px]
               font-normal
@@ -565,8 +565,8 @@ export default function ChatInput({
             }
             className={`
               flex
-              h-[34px]
-              w-[34px]
+              h-9
+              w-9
               shrink-0
               items-center
               justify-center

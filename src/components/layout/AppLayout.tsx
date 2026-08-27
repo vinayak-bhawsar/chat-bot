@@ -25,6 +25,12 @@ import {
   clearAttachmentMetadata,
   migrateAttachmentMetadata,
 } from "@/lib/attachmentStorage";
+import { resolveConversationTitle, generateChatTitle } from "@/lib/chatTitle";
+import {
+  getCachedConversation,
+  setCachedConversation,
+  clearConversationCache,
+} from "@/lib/conversationCache";
 
 // ================================================================
 // Backend Types
@@ -776,6 +782,53 @@ function AppLayoutContent({
     null
   );
 
+  const [loadingHistoryId, setLoadingHistoryId] = useState<string | null>(null);
+
+  // Popstate listener for browser back / forward navigation
+  useEffect(() => {
+    const handlePopState = () => {
+      if (typeof window === "undefined") return;
+      const currentPath = window.location.pathname;
+      if (currentPath === "/") {
+        setActiveConversationId(null);
+      } else if (currentPath.startsWith("/c/")) {
+        const id = currentPath.slice(3).trim();
+        if (id) {
+          setActiveConversationId(id);
+          const cached = getCachedConversation(id);
+          if (cached?.messages && cached.messages.length > 0) {
+            setConversations((prev) => {
+              const exists = prev.some((c) => c.id === id);
+              if (!exists) {
+                return [
+                  {
+                    id,
+                    title: cached.title || "Chat",
+                    document_id: cached.document_id || null,
+                    document_name: cached.document_name || null,
+                    messages: cached.messages!,
+                  },
+                  ...prev,
+                ];
+              }
+              return prev.map((c) =>
+                c.id === id && c.messages.length === 0
+                  ? { ...c, messages: cached.messages! }
+                  : c
+              );
+            });
+          }
+          if (isAuthenticated) {
+            void loadConversationHistory(id);
+          }
+        }
+      }
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, [isAuthenticated]);
+
   // Load active conversation history immediately if on /c/[id]
   useEffect(() => {
     if (routeConversationId && isAuthenticated) {
@@ -896,13 +949,35 @@ function AppLayoutContent({
           setConversations((previous) => {
             return validConversations.map((backendConv) => {
               const existing = previous.find((p) => p.id === backendConv.id);
-              if (existing && existing.messages.length > 0) {
+              const resolvedTitle = resolveConversationTitle({
+                title: backendConv.title,
+                messages: existing ? existing.messages : [],
+                document_name: backendConv.document_name,
+              });
+
+              if (existing) {
+                const existingResolved = resolveConversationTitle(existing);
+                const finalTitle =
+                  backendConv.title &&
+                  backendConv.title !== "New Chat" &&
+                  backendConv.title !== "Chat"
+                    ? backendConv.title
+                    : existingResolved || resolvedTitle || "New Chat";
+
                 return {
                   ...backendConv,
-                  messages: existing.messages,
+                  title: finalTitle,
+                  messages:
+                    existing.messages.length > 0
+                      ? existing.messages
+                      : backendConv.messages,
                 };
               }
-              return backendConv;
+
+              return {
+                ...backendConv,
+                title: resolvedTitle,
+              };
             });
           });
 
@@ -1064,7 +1139,8 @@ function AppLayoutContent({
           messages:
             Conversation["messages"]
         ) =>
-          Conversation["messages"])
+          Conversation["messages"]),
+    newTitle?: string
   ) => {
     if (
       typeof conversationId !==
@@ -1075,8 +1151,16 @@ function AppLayoutContent({
     }
 
     setConversations((previous) => {
-      const exists = previous.some((c) => c.id === conversationId);
-      const existingConv = previous.find((c) => c.id === conversationId);
+      // Check for exact ID match or temporary active conversation
+      const exactIndex = previous.findIndex((c) => c.id === conversationId);
+      const tempIndex =
+        exactIndex === -1 && !conversationId.startsWith("temp-")
+          ? previous.findIndex((c) => c.id.startsWith("temp-") || c.id === activeConversationId)
+          : -1;
+
+      const targetIndex = exactIndex !== -1 ? exactIndex : tempIndex;
+      const existingConv = targetIndex !== -1 ? previous[targetIndex] : undefined;
+
       const messages =
         typeof updater === "function"
           ? updater(existingConv ? existingConv.messages : [])
@@ -1086,11 +1170,31 @@ function AppLayoutContent({
       const docId = existingConv?.document_id || docFromMsgs?.documentId || null;
       const docName = existingConv?.document_name || docFromMsgs?.filename || null;
 
-      if (!exists) {
+      // Determine dynamic title
+      let titleToUse = newTitle?.trim();
+      if (!titleToUse || titleToUse === "New Chat" || titleToUse === "Chat") {
+        if (
+          existingConv &&
+          existingConv.title &&
+          existingConv.title !== "New Chat" &&
+          existingConv.title !== "Chat"
+        ) {
+          titleToUse = existingConv.title;
+        } else {
+          titleToUse = resolveConversationTitle({
+            title: existingConv?.title,
+            messages,
+            document_name: docName,
+          });
+        }
+      }
+
+      if (targetIndex === -1) {
+        // Brand new conversation
         return [
           {
             id: conversationId,
-            title: "New Chat",
+            title: titleToUse || "New Chat",
             document_id: docId,
             document_name: docName,
             messages,
@@ -1099,22 +1203,36 @@ function AppLayoutContent({
         ];
       }
 
-      return previous.map((conversation) => {
-        if (conversation.id !== conversationId) {
-          return conversation;
-        }
+      const updated = [...previous];
+      const conv = updated[targetIndex];
+      const updatedTitle =
+        (newTitle && newTitle.trim() && newTitle.trim() !== "New Chat" && newTitle.trim() !== "Chat"
+          ? newTitle.trim()
+          : null) ||
+        (conv.title && conv.title !== "New Chat" && conv.title !== "Chat"
+          ? conv.title
+          : titleToUse);
 
-        return {
-          ...conversation,
-          document_id: conversation.document_id || docId,
-          document_name: conversation.document_name || docName,
-          messages,
-        };
+      updated[targetIndex] = {
+        ...conv,
+        id: conversationId,
+        title: updatedTitle || conv.title || "New Chat",
+        document_id: conv.document_id || docId,
+        document_name: conv.document_name || docName,
+        messages,
+      };
+
+      // Deduplicate by ID
+      const seen = new Set<string>();
+      return updated.filter((item) => {
+        if (!item?.id || seen.has(item.id)) return false;
+        seen.add(item.id);
+        return true;
       });
     });
 
     setActiveConversationId((currentId) =>
-      currentId === null || currentId === "" ? conversationId : currentId
+      currentId === null || currentId === "" || currentId.startsWith("temp-") ? conversationId : currentId
     );
   };
 
@@ -1144,12 +1262,44 @@ function AppLayoutContent({
         return;
       }
 
+      // 1. Instant check: If we have cached messages, hydrate immediately!
+      const cached = getCachedConversation(cleanConversationId);
+      if (cached?.messages && cached.messages.length > 0) {
+        setConversations((previous) => {
+          const exists = previous.some((c) => c.id === cleanConversationId);
+          if (!exists) {
+            return [
+              {
+                id: cleanConversationId,
+                title: cached.title || "Chat",
+                document_id: cached.document_id || null,
+                document_name: cached.document_name || null,
+                messages: cached.messages!,
+              },
+              ...previous,
+            ];
+          }
+          return previous.map((c) =>
+            c.id === cleanConversationId
+              ? {
+                  ...c,
+                  title: cached.title || c.title,
+                  document_id: cached.document_id ?? c.document_id,
+                  document_name: cached.document_name ?? c.document_name,
+                  messages: c.messages.length > 0 ? c.messages : cached.messages!,
+                }
+              : c
+          );
+        });
+      } else {
+        // No cached messages, flag as loading history so smooth skeleton displays
+        setLoadingHistoryId(cleanConversationId);
+      }
+
       try {
         const response =
           await apiRequest<ConversationDetailResponse>(
-            `/conversation/${encodeURIComponent(
-              cleanConversationId
-            )}`,
+            `/conversation/${encodeURIComponent(cleanConversationId)}`,
             {
               method: "GET",
             }
@@ -1250,14 +1400,29 @@ function AppLayoutContent({
           }
         );
 
+        const resolvedTitle = resolveConversationTitle({
+          title: responseData?.title || conversationFromList?.title,
+          messages,
+          document_name: convDocName,
+        });
+
+        // Save to cache
+        setCachedConversation(cleanConversationId, {
+          messages,
+          title: resolvedTitle,
+          document_id: convDocId,
+          document_name: convDocName,
+        });
+
         setConversations(
           (previous) => {
             const exists = previous.some((c) => c.id === cleanConversationId);
+
             if (!exists) {
               return [
                 {
                   id: cleanConversationId,
-                  title: responseData?.title || "New Chat",
+                  title: resolvedTitle,
                   document_id: convDocId,
                   document_name: convDocName,
                   messages,
@@ -1271,8 +1436,15 @@ function AppLayoutContent({
                 return item;
               }
 
+              const itemResolvedTitle = resolveConversationTitle({
+                title: responseData?.title || item.title,
+                messages,
+                document_name: convDocName,
+              });
+
               return {
                 ...item,
+                title: itemResolvedTitle,
                 document_id: convDocId,
                 document_name: convDocName,
                 messages,
@@ -1289,6 +1461,7 @@ function AppLayoutContent({
         if (
           status === 404
         ) {
+          clearConversationCache(cleanConversationId);
           setConversations(
             (previous) =>
               previous.filter(
@@ -1308,9 +1481,9 @@ function AppLayoutContent({
                 : currentId
           );
 
-          if (isMounted && pathname === `/c/${cleanConversationId}`) {
+          if (typeof window !== "undefined" && window.location.pathname === `/c/${cleanConversationId}`) {
             try {
-              router.replace("/");
+              window.history.replaceState(null, "", "/");
             } catch {}
           }
 
@@ -1321,6 +1494,8 @@ function AppLayoutContent({
           "Failed to load conversation history:",
           error
         );
+      } finally {
+        setLoadingHistoryId(null);
       }
     };
 
@@ -1351,9 +1526,35 @@ function AppLayoutContent({
       const cleanConversationId =
         conversationId.trim();
 
+      // 1. Immediately activate ID in state
       setActiveConversationId(
         cleanConversationId
       );
+
+      // 2. Pre-hydrate from memory cache if available for 0ms instant display!
+      const cached = getCachedConversation(cleanConversationId);
+      if (cached?.messages && cached.messages.length > 0) {
+        setConversations((previous) => {
+          const exists = previous.some((c) => c.id === cleanConversationId);
+          if (!exists) {
+            return [
+              {
+                id: cleanConversationId,
+                title: cached.title || "Chat",
+                document_id: cached.document_id || null,
+                document_name: cached.document_name || null,
+                messages: cached.messages!,
+              },
+              ...previous,
+            ];
+          }
+          return previous.map((c) =>
+            c.id === cleanConversationId && c.messages.length === 0
+              ? { ...c, messages: cached.messages! }
+              : c
+          );
+        });
+      }
 
       if (isAuthenticated && typeof window !== "undefined") {
         localStorage.setItem("active_conversation_id", cleanConversationId);
@@ -1363,12 +1564,14 @@ function AppLayoutContent({
         false
       );
 
-      if (isMounted && pathname !== `/c/${cleanConversationId}`) {
+      // 3. Smooth in-place URL change without route unmount / suspense flicker!
+      if (typeof window !== "undefined" && window.location.pathname !== `/c/${cleanConversationId}`) {
         try {
-          router.push(`/c/${cleanConversationId}`);
+          window.history.pushState(null, "", `/c/${cleanConversationId}`);
         } catch {}
       }
 
+      // 4. Fetch fresh history in background
       await loadConversationHistory(
         cleanConversationId
       );
@@ -1697,7 +1900,8 @@ function AppLayoutContent({
 
   const replaceConversationId = (
     temporaryId: string,
-    backendId: string
+    backendId: string,
+    backendTitle?: string
   ) => {
     if (
       !temporaryId ||
@@ -1706,24 +1910,48 @@ function AppLayoutContent({
       return;
     }
 
-    setConversations(
-      (previous) =>
-        previous.map(
-          (
-            conversation
-          ) =>
-            conversation.id ===
-            temporaryId
-              ? {
-                  ...conversation,
-                  id: backendId,
-                }
-              : conversation
-        )
-    );
+    setConversations((previous) => {
+      const cleanBackendTitle = backendTitle?.trim();
+      const tempConv = previous.find((c) => c.id === temporaryId);
+      const backendConv = previous.find((c) => c.id === backendId);
+
+      const finalTitle =
+        cleanBackendTitle &&
+        cleanBackendTitle !== "New Chat" &&
+        cleanBackendTitle !== "Chat"
+          ? cleanBackendTitle
+          : tempConv
+            ? resolveConversationTitle(tempConv)
+            : backendConv
+              ? resolveConversationTitle(backendConv)
+              : undefined;
+
+      const updated = previous.map((conversation) => {
+        if (conversation.id === temporaryId || conversation.id === backendId) {
+          return {
+            ...conversation,
+            id: backendId,
+            title: finalTitle || conversation.title || "New Chat",
+            messages:
+              tempConv && tempConv.messages.length > conversation.messages.length
+                ? tempConv.messages
+                : conversation.messages,
+          };
+        }
+        return conversation;
+      });
+
+      // Deduplicate by ID
+      const seen = new Set<string>();
+      return updated.filter((item) => {
+        if (!item?.id || seen.has(item.id)) return false;
+        seen.add(item.id);
+        return true;
+      });
+    });
 
     setActiveConversationId((currentId) =>
-      currentId === temporaryId || currentId === null ? backendId : currentId
+      currentId === temporaryId || currentId === null || currentId.startsWith("temp-") ? backendId : currentId
     );
 
     if (typeof window !== "undefined") {
@@ -1760,25 +1988,20 @@ function AppLayoutContent({
     const cleanTitle =
       title.trim();
 
-    if (!cleanTitle) {
+    if (!cleanTitle || cleanTitle === "New Chat" || cleanTitle === "Chat") {
       return;
     }
 
-    setConversations(
-      (previous) =>
-        previous.map(
-          (
-            conversation
-          ) =>
-            conversation.id ===
-            conversationId
-              ? {
-                  ...conversation,
-                  title:
-                    cleanTitle,
-                }
-              : conversation
-        )
+    setConversations((previous) =>
+      previous.map((conversation) =>
+        conversation.id === conversationId ||
+        (conversation.id.startsWith("temp-") && (activeConversationId === conversation.id || activeConversationId === conversationId))
+          ? {
+              ...conversation,
+              title: cleanTitle,
+            }
+          : conversation
+      )
     );
   };
 
@@ -1952,6 +2175,13 @@ function AppLayoutContent({
             }
             conversations={
               conversations
+            }
+            isLoadingHistory={
+              Boolean(
+                loadingHistoryId === activeConversationId &&
+                (!conversations.find((c) => c.id === activeConversationId)?.messages ||
+                  conversations.find((c) => c.id === activeConversationId)!.messages.length === 0)
+              )
             }
             onNewChat={
               createNewChat

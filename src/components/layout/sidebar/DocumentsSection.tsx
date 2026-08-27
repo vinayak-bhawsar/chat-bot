@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 
 import {
   ChevronDown,
@@ -68,6 +69,12 @@ export default function DocumentsSection({
     isAuthenticated,
     isLoading: authLoading,
   } = useAuth();
+
+  const [isMounted, setIsMounted] = useState(false);
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
 
   // ==============================================================
   // Documents open / closed
@@ -1550,366 +1557,392 @@ export default function DocumentsSection({
       </section>
 
       {/* ============================================================
-          Create Folder Modal
+          Create Folder Modal (Full Viewport Portal)
           ============================================================ */}
 
-      {showFolderModal ? (
-        <div
-          className="
-            fixed
-            inset-0
-            z-[100]
-            flex
-            items-center
-            justify-center
-            bg-black/40
-            px-4
-            backdrop-blur-sm
-          "
-          onMouseDown={(event) => {
-            if (
-              event.target ===
-              event.currentTarget
-            ) {
-              closeFolderModal();
-            }
-          }}
-        >
+      {isMounted &&
+        showFolderModal &&
+        createPortal(
           <div
             className="
-              w-full
-              max-w-sm
-              rounded-2xl
-              bg-white
-              p-5
-              shadow-xl
+              fixed
+              inset-0
+              z-[100]
+              flex
+              items-center
+              justify-center
+              bg-black/30
+              px-4
+              backdrop-blur-sm
+              animate-in
+              fade-in
+              duration-150
             "
+            onClick={() => {
+              if (!isCreatingFolder) {
+                closeFolderModal();
+              }
+            }}
+            role="presentation"
           >
-            {/* Header */}
-
             <div
               className="
-                flex
-                items-center
-                justify-between
+                w-full
+                max-w-sm
+                rounded-2xl
+                border
+                border-zinc-200
+                bg-white
+                p-6
+                shadow-2xl
+                animate-in
+                zoom-in-95
+                duration-150
               "
+              onClick={(event) => {
+                event.stopPropagation();
+              }}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="section-create-folder-title"
             >
-              <h2
-                className="
-                  text-base
-                  font-semibold
-                  text-zinc-900
-                "
-              >
-                Create Folder
-              </h2>
-
-              <button
-                type="button"
-                onClick={
-                  closeFolderModal
-                }
-                className="
-                  rounded-lg
-                  p-1.5
-                  text-zinc-500
-                  hover:bg-zinc-100
-                "
-                aria-label="Close create folder dialog"
-              >
-                <X
+              {/* Header */}
+              <div className="flex items-start justify-between gap-4">
+                <div
                   className="
-                    h-4
-                    w-4
+                    flex
+                    h-10
+                    w-10
+                    shrink-0
+                    items-center
+                    justify-center
+                    rounded-full
+                    bg-[#56C5D9]/15
+                    text-[#2ba8be]
+                    border
+                    border-[#56C5D9]/30
+                  "
+                >
+                  <FolderPlus className="h-5 w-5" />
+                </div>
+
+                <button
+                  type="button"
+                  onClick={closeFolderModal}
+                  disabled={isCreatingFolder}
+                  aria-label="Close"
+                  className="
+                    flex
+                    h-8
+                    w-8
+                    items-center
+                    justify-center
+                    rounded-lg
+                    text-zinc-400
+                    transition
+                    hover:bg-zinc-100
+                    hover:text-zinc-700
+                    disabled:cursor-not-allowed
+                    disabled:opacity-40
+                  "
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              {/* Content */}
+              <div className="mt-4">
+                <h2
+                  id="section-create-folder-title"
+                  className="text-lg font-semibold text-zinc-900"
+                >
+                  New Folder
+                </h2>
+
+                <p className="mt-1 text-sm text-zinc-500">
+                  Create a folder inside{" "}
+                  <span className="font-medium text-zinc-700">
+                    {folderPath[folderPath.length - 1]?.name ?? "Documents"}
+                  </span>
+                  .
+                </p>
+
+                <input
+                  type="text"
+                  value={folderName}
+                  onChange={(event) => setFolderName(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && folderName.trim() && !isCreatingFolder) {
+                      event.preventDefault();
+                      void handleCreateFolder();
+                    } else if (event.key === "Escape" && !isCreatingFolder) {
+                      closeFolderModal();
+                    }
+                  }}
+                  placeholder="Folder name"
+                  autoFocus
+                  disabled={isCreatingFolder}
+                  className="
+                    mt-4
+                    w-full
+                    rounded-xl
+                    border
+                    border-zinc-300
+                    px-3.5
+                    py-2.5
+                    text-sm
+                    text-zinc-900
+                    placeholder:text-zinc-400
+                    outline-none
+                    transition
+                    focus:border-[#2ba8be]
+                    focus:ring-2
+                    focus:ring-[#56C5D9]/20
+                    disabled:bg-zinc-50
+                    disabled:text-zinc-400
                   "
                 />
-              </button>
+              </div>
+
+              {/* Actions */}
+              <div className="mt-6 flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={closeFolderModal}
+                  disabled={isCreatingFolder}
+                  className="
+                    rounded-lg
+                    border
+                    border-zinc-200
+                    px-4
+                    py-2
+                    text-sm
+                    font-medium
+                    text-zinc-700
+                    transition
+                    hover:bg-zinc-50
+                    disabled:cursor-not-allowed
+                    disabled:opacity-50
+                  "
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => void handleCreateFolder()}
+                  disabled={isCreatingFolder || !folderName.trim()}
+                  className="
+                    flex
+                    min-w-[90px]
+                    items-center
+                    justify-center
+                    gap-2
+                    rounded-lg
+                    bg-zinc-900
+                    px-4
+                    py-2
+                    text-sm
+                    font-medium
+                    text-white
+                    transition
+                    hover:bg-zinc-800
+                    disabled:cursor-not-allowed
+                    disabled:opacity-50
+                  "
+                >
+                  {isCreatingFolder ? (
+                    <>
+                      <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+                      Creating...
+                    </>
+                  ) : (
+                    "Create"
+                  )}
+                </button>
+              </div>
             </div>
-
-            {/* Description */}
-
-            <p
-              className="
-                mt-1
-                text-xs
-                text-zinc-500
-              "
-            >
-              Create a folder inside{" "}
-              {
-                folderPath[
-                  folderPath.length -
-                  1
-                ]?.name ??
-                "Documents"
-              }
-              .
-            </p>
-
-            {/* Folder name */}
-
-            <input
-              type="text"
-              value={
-                folderName
-              }
-              onChange={(event) =>
-                setFolderName(
-                  event.target.value
-                )
-              }
-              onKeyDown={(event) => {
-                if (
-                  event.key ===
-                  "Enter"
-                ) {
-                  void handleCreateFolder();
-                }
-
-                if (
-                  event.key ===
-                  "Escape"
-                ) {
-                  closeFolderModal();
-                }
-              }}
-              placeholder="Folder name"
-              autoFocus
-              disabled={
-                isCreatingFolder
-              }
-              className="
-                mt-4
-                w-full
-                rounded-lg
-                border
-                border-zinc-300
-                px-3
-                py-2.5
-                text-sm
-                text-zinc-900
-                outline-none
-                focus:border-zinc-500
-                focus:ring-2
-                focus:ring-zinc-200
-              "
-            />
-
-            {/* Buttons */}
-
-            <div
-              className="
-                mt-4
-                flex
-                justify-end
-                gap-2
-              "
-            >
-              <button
-                type="button"
-                onClick={
-                  closeFolderModal
-                }
-                disabled={
-                  isCreatingFolder
-                }
-                className="
-                  rounded-lg
-                  border
-                  border-zinc-300
-                  px-3
-                  py-2
-                  text-sm
-                  text-zinc-700
-                  hover:bg-zinc-100
-                  disabled:opacity-50
-                "
-              >
-                Cancel
-              </button>
-
-              <button
-                type="button"
-                onClick={() =>
-                  void handleCreateFolder()
-                }
-                disabled={
-                  isCreatingFolder ||
-                  !folderName.trim()
-                }
-                className="
-                  inline-flex
-                  items-center
-                  gap-2
-                  rounded-lg
-                  bg-zinc-900
-                  px-3
-                  py-2
-                  text-sm
-                  font-medium
-                  text-white
-                  hover:bg-zinc-700
-                  disabled:cursor-not-allowed
-                  disabled:opacity-50
-                "
-              >
-                {isCreatingFolder ? (
-                  <Loader2
-                    className="
-                      h-4
-                      w-4
-                      animate-spin
-                    "
-                  />
-                ) : null}
-
-                Create
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
+          </div>,
+          document.body
+        )}
 
       {/* ============================================================
-          Delete Confirmation
+          Delete Item Modal (Full Viewport Portal - Matches Main Sidebar)
           ============================================================ */}
 
-      {deleteTarget ? (
-        <div
-          className="
-            fixed
-            inset-0
-            z-[100]
-            flex
-            items-center
-            justify-center
-            bg-black/40
-            px-4
-            backdrop-blur-sm
-          "
-          onMouseDown={(event) => {
-            if (
-              event.target ===
-              event.currentTarget &&
-              !deletingId
-            ) {
-              setDeleteTarget(
-                null
-              );
-            }
-          }}
-        >
+      {isMounted &&
+        deleteTarget &&
+        createPortal(
           <div
             className="
-              w-full
-              max-w-sm
-              rounded-2xl
-              bg-white
-              p-5
-              shadow-xl
+              fixed
+              inset-0
+              z-[100]
+              flex
+              items-center
+              justify-center
+              bg-black/30
+              px-4
+              backdrop-blur-sm
+              animate-in
+              fade-in
+              duration-150
             "
-          >
-            <h2
-              className="
-                text-base
-                font-semibold
-                text-zinc-900
-              "
-            >
-              Delete{" "}
-              {deleteTarget.is_folder
-                ? "folder"
-                : "file"}
-              ?
-            </h2>
-
-            <p
-              className="
-                mt-2
-                text-sm
-                text-zinc-500
-              "
-            >
-              Are you sure you want to
-              delete &quot;
-              {
-                deleteTarget.file_name
+            onClick={() => {
+              if (!deletingId) {
+                setDeleteTarget(null);
               }
-              &quot;?
-            </p>
-
+            }}
+            role="presentation"
+          >
             <div
               className="
-                mt-5
-                flex
-                justify-end
-                gap-2
+                w-full
+                max-w-sm
+                rounded-2xl
+                border
+                border-zinc-200
+                bg-white
+                p-6
+                shadow-2xl
+                animate-in
+                zoom-in-95
+                duration-150
               "
+              onClick={(event) => {
+                event.stopPropagation();
+              }}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="section-delete-document-title"
             >
-              <button
-                type="button"
-                disabled={
-                  !!deletingId
-                }
-                onClick={() =>
-                  setDeleteTarget(
-                    null
-                  )
-                }
-                className="
-                  rounded-lg
-                  border
-                  border-zinc-300
-                  px-3
-                  py-2
-                  text-sm
-                  text-zinc-700
-                  hover:bg-zinc-100
-                  disabled:opacity-50
-                "
-              >
-                Cancel
-              </button>
+              {/* Header */}
+              <div className="flex items-start justify-between gap-4">
+                <div
+                  className="
+                    flex
+                    h-10
+                    w-10
+                    shrink-0
+                    items-center
+                    justify-center
+                    rounded-full
+                    bg-red-50
+                    text-red-600
+                  "
+                >
+                  <Trash2 className="h-5 w-5" />
+                </div>
 
-              <button
-                type="button"
-                disabled={
-                  !!deletingId
-                }
-                onClick={() =>
-                  void handleDelete()
-                }
-                className="
-                  inline-flex
-                  items-center
-                  gap-2
-                  rounded-lg
-                  bg-red-600
-                  px-3
-                  py-2
-                  text-sm
-                  font-medium
-                  text-white
-                  hover:bg-red-700
-                  disabled:opacity-50
-                "
-              >
-                {deletingId ? (
-                  <Loader2
-                    className="
-                      h-4
-                      w-4
-                      animate-spin
-                    "
-                  />
-                ) : null}
+                <button
+                  type="button"
+                  onClick={() => setDeleteTarget(null)}
+                  disabled={!!deletingId}
+                  aria-label="Close"
+                  className="
+                    flex
+                    h-8
+                    w-8
+                    items-center
+                    justify-center
+                    rounded-lg
+                    text-zinc-400
+                    transition
+                    hover:bg-zinc-100
+                    hover:text-zinc-700
+                    disabled:cursor-not-allowed
+                    disabled:opacity-40
+                  "
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
 
-                Delete
-              </button>
+              {/* Content */}
+              <div className="mt-4">
+                <h2
+                  id="section-delete-document-title"
+                  className="text-lg font-semibold text-zinc-900"
+                >
+                  Delete {deleteTarget.is_folder ? "folder" : "document"}?
+                </h2>
+
+                <p className="mt-2 text-sm leading-6 text-zinc-500">
+                  Are you sure you want to delete{" "}
+                  <span className="font-medium text-zinc-700">
+                    &quot;{deleteTarget.file_name}&quot;
+                  </span>
+                  ?
+                </p>
+
+                <p className="mt-1 text-sm leading-6 text-zinc-500">
+                  {deleteTarget.is_folder
+                    ? "This folder and all its contents will be permanently deleted."
+                    : "This document will be permanently deleted from your Knowledge Base."}
+                </p>
+              </div>
+
+              {/* Actions */}
+              <div className="mt-6 flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setDeleteTarget(null)}
+                  disabled={!!deletingId}
+                  className="
+                    rounded-lg
+                    border
+                    border-zinc-200
+                    px-4
+                    py-2
+                    text-sm
+                    font-medium
+                    text-zinc-700
+                    transition
+                    hover:bg-zinc-50
+                    disabled:cursor-not-allowed
+                    disabled:opacity-50
+                  "
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => void handleDelete()}
+                  disabled={!!deletingId}
+                  className="
+                    flex
+                    min-w-[90px]
+                    items-center
+                    justify-center
+                    gap-2
+                    rounded-lg
+                    bg-red-600
+                    px-4
+                    py-2
+                    text-sm
+                    font-medium
+                    text-white
+                    transition
+                    hover:bg-red-700
+                    disabled:cursor-not-allowed
+                    disabled:opacity-60
+                  "
+                >
+                  {deletingId ? (
+                    <>
+                      <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+                      Deleting...
+                    </>
+                  ) : (
+                    "Delete"
+                  )}
+                </button>
+              </div>
             </div>
-          </div>
-        </div>
-      ) : null}
+          </div>,
+          document.body
+        )}
     </>
   );
 }
