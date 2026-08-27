@@ -11,6 +11,9 @@ import {
   ArrowUp,
   Eye,
   FileText,
+  FileCode,
+  FileSpreadsheet,
+  FileArchive,
   Image as ImageIcon,
   Loader2,
   LogIn,
@@ -20,6 +23,7 @@ import {
 } from "lucide-react";
 
 import { getLocalizedErrorMessage } from "@/i18n";
+import { getFileDetails, cleanDisplayName } from "@/lib/fileTypes";
 
 // ================================================================
 // Types
@@ -29,6 +33,7 @@ export interface UploadedDocument {
   file: File | null;
   documentId?: string;
   filename: string;
+  source?: "knowledge_base" | "conversation";
 }
 
 interface ChatInputProps {
@@ -107,10 +112,12 @@ export default function ChatInput({
   // File displayed in input
   // ==============================================================
 
-  const displayFilename =
+  const rawFilename =
     uploadedDocument?.filename ||
     uploadedDocument?.file?.name ||
     selectedFile?.name;
+
+  const displayFilename = cleanDisplayName(rawFilename, "Attached File");
 
   const hasAttachment = Boolean(
     uploadedDocument || selectedFile
@@ -158,25 +165,55 @@ export default function ChatInput({
 
     const fileType = file.type ? file.type.toLowerCase() : "";
     const fileName = file.name.toLowerCase();
+    const ext = fileName.split(".").pop() || "";
 
-    const isPdf =
-      fileType === "application/pdf" ||
-      (!fileType && fileName.endsWith(".pdf"));
+    const supportedExts = [
+      "pdf",
+      "png",
+      "jpg",
+      "jpeg",
+      "webp",
+      "gif",
+      "svg",
+      "bmp",
+      "txt",
+      "md",
+      "markdown",
+      "csv",
+      "tsv",
+      "docx",
+      "doc",
+      "xlsx",
+      "xls",
+      "pptx",
+      "ppt",
+      "json",
+      "xml",
+      "html",
+      "css",
+      "js",
+      "ts",
+      "py",
+      "sql",
+      "log",
+    ];
 
-    const isImage =
-      fileType === "image/png" ||
-      fileType === "image/jpeg" ||
-      fileType === "image/webp" ||
+    const isAllowed =
       fileType.startsWith("image/") ||
-      (!fileType && /\.(png|jpe?g|webp)$/i.test(fileName));
-
-    const isAllowed = isPdf || isImage;
+      fileType.startsWith("text/") ||
+      fileType.includes("pdf") ||
+      fileType.includes("document") ||
+      fileType.includes("sheet") ||
+      fileType.includes("presentation") ||
+      fileType.includes("json") ||
+      fileType.includes("xml") ||
+      supportedExts.includes(ext);
 
     if (!isAllowed) {
       alert(
         getLocalizedErrorMessage(
           "UNSUPPORTED_MEDIA_TYPE",
-          "Please upload a PDF or supported image file (PNG, JPG, JPEG, WEBP)."
+          "Please upload a supported document (PDF, TXT, CSV, DOCX, XLSX, JSON) or image file."
         )
       );
 
@@ -317,140 +354,107 @@ export default function ChatInput({
             ATTACHMENT PREVIEW (Authenticated only)
         ====================================================== */}
 
-        {hasAttachment && displayFilename && (
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="
-              mb-2
-              flex
-              items-center
-              justify-between
-              rounded-xl
-              border
-              border-zinc-200
-              bg-zinc-50
-              px-3
-              py-2
-            "
-          >
-            <div className="flex min-w-0 items-center gap-2.5">
-              <div
-                className={`
-                  flex
-                  h-8
-                  w-8
-                  shrink-0
-                  items-center
-                  justify-center
-                  rounded-lg
-                  border
-                  ${
+        {hasAttachment && displayFilename && (() => {
+          const fileDetails = getFileDetails(
+            displayFilename,
+            selectedFile?.type || uploadedDocument?.file?.type
+          );
+
+          const renderAttachmentIcon = () => {
+            if (isUploading) {
+              return <Loader2 className="h-4 w-4 animate-spin text-amber-600" />;
+            }
+            switch (fileDetails.category) {
+              case "image":
+                return <ImageIcon className="h-4 w-4" />;
+              case "code":
+                return <FileCode className="h-4 w-4" />;
+              case "excel":
+                return <FileSpreadsheet className="h-4 w-4" />;
+              case "archive":
+                return <FileArchive className="h-4 w-4" />;
+              case "text":
+              case "pdf":
+              case "word":
+              case "powerpoint":
+              default:
+                return <FileText className="h-4 w-4" />;
+            }
+          };
+
+          return (
+            <div
+              onClick={(e) => e.stopPropagation()}
+              className="mb-2 flex items-center justify-between rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2"
+            >
+              <div className="flex min-w-0 items-center gap-2.5">
+                <div
+                  className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border ${
                     isUploading
                       ? "border-amber-100 bg-amber-50 text-amber-600"
-                      : isImageAttachment
-                        ? "border-blue-100 bg-blue-50 text-blue-600"
-                        : "border-red-100 bg-red-50 text-red-600"
-                  }
-                `}
-              >
-                {isUploading ? (
-                  <Loader2 className="h-4 w-4 animate-spin text-amber-600" />
-                ) : isImageAttachment ? (
-                  <ImageIcon className="h-4 w-4" />
-                ) : (
-                  <FileText className="h-4 w-4" />
-                )}
+                      : fileDetails.colorClass
+                  }`}
+                >
+                  {renderAttachmentIcon()}
+                </div>
+
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium text-zinc-800">
+                    {displayFilename}
+                  </p>
+
+                  <p className="text-[11px] text-zinc-500">
+                    {isUploading
+                      ? `Uploading ${fileDetails.label.toLowerCase()}...`
+                      : isStreaming
+                        ? "Processing..."
+                        : uploadedDocument?.documentId
+                          ? `Stored in Knowledge Base • Ready to chat`
+                          : `${fileDetails.label} attached • Ready to send`}
+                  </p>
+                </div>
               </div>
 
-              <div className="min-w-0">
-                <p className="truncate text-sm font-medium text-zinc-800">
-                  {displayFilename}
-                </p>
+              {/* Actions: Preview & Remove */}
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (typeof window !== "undefined") {
+                      window.dispatchEvent(
+                        new CustomEvent("pdf:open", {
+                          detail: {
+                            filename: displayFilename,
+                            documentId: uploadedDocument?.documentId || null,
+                            file:
+                              uploadedDocument?.file ||
+                              selectedFile ||
+                              null,
+                          },
+                        })
+                      );
+                    }
+                  }}
+                  className="flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-zinc-600 transition hover:bg-zinc-200 hover:text-zinc-900"
+                  title={`Open and preview ${fileDetails.label.toLowerCase()}`}
+                >
+                  <Eye className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Preview</span>
+                </button>
 
-                <p className="text-[11px] text-zinc-500">
-                  {isUploading
-                    ? isImageAttachment
-                      ? "Uploading image..."
-                      : "Uploading document..."
-                    : isStreaming
-                      ? "Processing..."
-                      : uploadedDocument?.documentId
-                        ? isImageAttachment
-                          ? "Stored image attached • Ready to chat"
-                          : "Stored document attached • Ready to chat"
-                        : isImageAttachment
-                          ? "Image attached • Ready to send"
-                          : "PDF attached • Ready to send"}
-                </p>
+                <button
+                  type="button"
+                  onClick={handleRemoveFile}
+                  disabled={isUploading || isStreaming}
+                  aria-label="Remove file"
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-zinc-500 transition hover:bg-zinc-200 hover:text-zinc-900 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <X className="h-4 w-4" />
+                </button>
               </div>
             </div>
-
-            {/* Actions: Preview & Remove */}
-            <div className="flex items-center gap-1">
-              <button
-                type="button"
-                onClick={() => {
-                  if (typeof window !== "undefined") {
-                    window.dispatchEvent(
-                      new CustomEvent("pdf:open", {
-                        detail: {
-                          filename: displayFilename,
-                          documentId: uploadedDocument?.documentId || null,
-                          file:
-                            uploadedDocument?.file ||
-                            selectedFile ||
-                            null,
-                        },
-                      })
-                    );
-                  }
-                }}
-                className="
-                  flex
-                  items-center
-                  gap-1
-                  rounded-md
-                  px-2
-                  py-1
-                  text-xs
-                  font-medium
-                  text-zinc-600
-                  transition
-                  hover:bg-zinc-200
-                  hover:text-zinc-900
-                "
-                title={isImageAttachment ? "Open and preview image" : "Open and preview PDF"}
-              >
-                <Eye className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Preview</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={handleRemoveFile}
-                disabled={isUploading || isStreaming}
-                aria-label="Remove file"
-                className="
-                  flex
-                  h-7
-                  w-7
-                  shrink-0
-                  items-center
-                  justify-center
-                  rounded-md
-                  text-zinc-500
-                  transition
-                  hover:bg-zinc-200
-                  hover:text-zinc-900
-                  disabled:cursor-not-allowed
-                  disabled:opacity-50
-                "
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* ======================================================
             INPUT ROW
@@ -501,7 +505,7 @@ export default function ChatInput({
           <input
             ref={fileInputRef}
             type="file"
-            accept=".pdf,application/pdf,image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp"
+            accept=".pdf,application/pdf,image/png,image/jpeg,image/webp,.png,.jpg,.jpeg,.webp,.txt,.csv,.json,.md,.docx,.xlsx,.pptx,.xml,.py,.js,.ts"
             onChange={handleFileSelect}
             className="hidden"
           />
@@ -518,9 +522,7 @@ export default function ChatInput({
             disabled={isStreaming}
             placeholder={
               hasAttachment
-                ? isImageAttachment
-                  ? "Ask something about this image..."
-                  : "Ask something about this PDF..."
+                ? `Ask something about this ${getFileDetails(displayFilename, selectedFile?.type || uploadedDocument?.file?.type).label.toLowerCase()}...`
                 : "Message AI Chat..."
             }
             rows={1}

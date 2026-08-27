@@ -35,6 +35,45 @@ interface RecentChatsProps {
     | null;
 }
 
+import { cleanDisplayName } from "@/lib/fileTypes";
+
+function getCleanChatTitle(conversation: Conversation): string {
+  const rawTitle = (conversation.title || "").trim();
+  const uuidPattern = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/i;
+
+  if (
+    rawTitle &&
+    !uuidPattern.test(rawTitle) &&
+    !rawTitle.toLowerCase().startsWith("conversation ") &&
+    !rawTitle.toLowerCase().startsWith("chat_")
+  ) {
+    return rawTitle;
+  }
+
+  const firstUserMsg = conversation.messages?.find(
+    (m) =>
+      m.role === "user" &&
+      m.content &&
+      m.content.trim() &&
+      m.content !== "Please summarize this document." &&
+      m.content !== "Please analyze this image."
+  );
+
+  if (firstUserMsg?.content) {
+    const clean = firstUserMsg.content.trim().replace(/\n+/g, " ");
+    return clean.length > 34 ? `${clean.slice(0, 34)}...` : clean;
+  }
+
+  const attachment = conversation.messages?.find(
+    (m) => m.attachment?.filename
+  )?.attachment;
+  if (attachment?.filename) {
+    return cleanDisplayName(attachment.filename, "Document Chat");
+  }
+
+  return "New Chat";
+}
+
 export default function RecentChats({
   collapsed,
   showText,
@@ -153,7 +192,7 @@ export default function RecentChats({
               collapsed ? "hidden" : ""
             }`}
           >
-            <div className="mx-auto mb-2 flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-50 text-indigo-600 border border-indigo-100">
+            <div className="mx-auto mb-2 flex h-8 w-8 items-center justify-center rounded-lg bg-[#56C5D9]/10 text-[#2ba8be] border border-[#56C5D9]/25">
               <MessageSquare className="h-4 w-4" />
             </div>
             <p className="text-xs font-semibold text-zinc-800">
@@ -181,7 +220,7 @@ export default function RecentChats({
               ====================================================== */
           validConversations.map((conversation) => {
             const conversationId = conversation.id;
-            const title = conversation.title?.trim() || "New Chat";
+            const title = getCleanChatTitle(conversation);
             const isActive = activeConversationId === conversationId;
             const isDeleting = deletingConversationId === conversationId;
 
@@ -197,21 +236,21 @@ export default function RecentChats({
                     onSelectChat(conversationId);
                   }}
                   title={collapsed ? title : undefined}
-                  className={`flex w-full items-center rounded-xl px-2.5 py-2 text-left text-xs font-medium transition-all duration-150 ${
+                  className={`flex w-full items-center rounded-xl px-2.5 py-2 text-left text-xs transition-all duration-150 border ${
                     isActive
-                      ? "bg-zinc-200/70 text-zinc-900 font-semibold shadow-2xs"
-                      : "text-zinc-600 hover:bg-zinc-200/40 hover:text-zinc-900"
+                      ? "bg-white text-zinc-950 font-semibold border-zinc-200 shadow-2xs"
+                      : "border-transparent text-zinc-600 hover:bg-white hover:border-zinc-200/70 hover:text-zinc-900 hover:shadow-2xs"
                   } ${
                     isDeleting ? "opacity-40" : ""
                   }`}
                 >
                   <MessageSquare
-                    className={`h-4 w-4 shrink-0 mr-2.5 ${
-                      isActive ? "text-zinc-900" : "text-zinc-400 group-hover:text-zinc-600"
+                    className={`h-4 w-4 shrink-0 mr-2.5 transition-colors ${
+                      isActive ? "text-[#2ba8be]" : "text-zinc-400 group-hover:text-zinc-600"
                     }`}
                   />
 
-                  <span className="truncate flex-1">
+                  <span className="truncate flex-1 pr-6">
                     {title}
                   </span>
                 </button>
@@ -225,8 +264,8 @@ export default function RecentChats({
                     onDeleteChat(conversationId);
                   }}
                   aria-label="Delete chat"
-                  className={`absolute right-1.5 top-1/2 -translate-y-1/2 flex h-6 w-6 items-center justify-center rounded-lg text-zinc-400 opacity-0 group-hover:opacity-100 hover:bg-zinc-300/60 hover:text-red-600 transition-all ${
-                    isActive ? "opacity-80" : ""
+                  className={`absolute right-1.5 top-1/2 -translate-y-1/2 flex h-6 w-6 items-center justify-center rounded-lg text-zinc-400 opacity-0 group-hover:opacity-100 hover:bg-red-50 hover:text-red-600 transition-all ${
+                    isActive ? "opacity-70 hover:opacity-100" : ""
                   }`}
                 >
                   {isDeleting ? (

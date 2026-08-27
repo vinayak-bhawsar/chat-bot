@@ -377,16 +377,36 @@ async function performTokenRefresh(): Promise<string> {
   if (
     contentType?.includes(
       "application/json"
-    )
+    ) ||
+    contentType?.includes("text/json") ||
+    contentType?.includes("application/problem+json")
   ) {
-    data =
-      await response.json();
-  } else {
+    try {
+      data =
+        await response.json();
+    } catch {
+      data = null;
+    }
+  }
+
+  if (data === null) {
     const text =
       await response.text();
 
-    data =
-      text || null;
+    if (text) {
+      const trimmed = text.trim();
+      if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+        try {
+          data = JSON.parse(trimmed);
+        } catch {
+          data = text;
+        }
+      } else {
+        data = text;
+      }
+    } else {
+      data = null;
+    }
   }
 
   // ==============================================================
@@ -775,16 +795,55 @@ async function performApiRequest<T>(
   if (
     contentType?.includes(
       "application/json"
-    )
+    ) ||
+    contentType?.includes("text/json") ||
+    contentType?.includes("application/problem+json")
   ) {
-    data =
-      await response.json();
-  } else {
+    try {
+      data =
+        await response.json();
+    } catch {
+      data = null;
+    }
+  }
+
+  if (data === null) {
     const text =
       await response.text();
 
-    data =
-      text || null;
+    if (text) {
+      const trimmed = text.trim();
+      if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+        try {
+          data = JSON.parse(trimmed);
+        } catch {
+          data = text;
+        }
+      } else if (trimmed.includes("data:")) {
+        // SSE formatted response: parse chunks and merge
+        const lines = trimmed.split("\n");
+        let mergedObj: any = null;
+        for (const line of lines) {
+          const cleanLine = line.trim();
+          if (cleanLine.startsWith("data:")) {
+            const jsonStr = cleanLine.slice(5).trim();
+            if (jsonStr && jsonStr !== "[DONE]") {
+              try {
+                const parsed = JSON.parse(jsonStr);
+                if (parsed && typeof parsed === "object") {
+                  mergedObj = { ...(mergedObj || {}), ...parsed };
+                }
+              } catch {}
+            }
+          }
+        }
+        data = mergedObj || text;
+      } else {
+        data = text;
+      }
+    } else {
+      data = null;
+    }
   }
 
   // ==============================================================
@@ -840,6 +899,246 @@ async function performApiRequest<T>(
   // ==============================================================
 
   return data as T;
+}
+
+// ================================================================
+// Extract Document & Conversation ID Helpers
+// ================================================================
+
+export function extractDocumentId(response: any): string | null {
+  if (!response) return null;
+
+  if (typeof response === "string") {
+    const trimmed = response.trim();
+    if (!trimmed) return null;
+
+    // 1. Direct JSON parse
+    if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        const parsedId = extractDocumentId(parsed);
+        if (parsedId) return parsedId;
+      } catch {
+        // Not valid JSON
+      }
+    }
+
+    // 2. Check if SSE formatted string with "data: ..."
+    if (trimmed.includes("data:")) {
+      const lines = trimmed.split("\n");
+      for (let i = lines.length - 1; i >= 0; i--) {
+        const line = lines[i].trim();
+        if (line.startsWith("data:")) {
+          const jsonStr = line.slice(5).trim();
+          if (jsonStr && jsonStr !== "[DONE]") {
+            try {
+              const parsed = JSON.parse(jsonStr);
+              const id = extractDocumentId(parsed);
+              if (id) return id;
+            } catch {}
+          }
+        }
+      }
+    }
+
+    // 3. Regex scan for document ID fields in string/JSON-like chunks
+    const docFieldRegexes = [
+      /"document_id"\s*:\s*"([^"]+)"/i,
+      /"documentId"\s*:\s*"([^"]+)"/i,
+      /"doc_id"\s*:\s*"([^"]+)"/i,
+      /"docId"\s*:\s*"([^"]+)"/i,
+      /"file_id"\s*:\s*"([^"]+)"/i,
+      /"upload_id"\s*:\s*"([^"]+)"/i,
+      /"id"\s*:\s*"([0-9a-fA-F-]{36}|[a-zA-Z0-9_-]{8,64})"/i,
+    ];
+
+    for (const regex of docFieldRegexes) {
+      const match = trimmed.match(regex);
+      if (match && match[1]) {
+        const candidate = match[1].trim();
+        if (candidate && candidate.length > 5 && !candidate.toLowerCase().includes("uploading")) {
+          return candidate;
+        }
+      }
+    }
+
+    // 4. Regex scan for UUID pattern
+    const uuidMatch = trimmed.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i);
+    if (uuidMatch && uuidMatch[0]) {
+      return uuidMatch[0].trim();
+    }
+
+    // 5. If the trimmed string itself is an alphanumeric ID without whitespace
+    if (/^[a-zA-Z0-9_-]{8,64}$/.test(trimmed) && !trimmed.includes(" ") && !trimmed.includes("<") && !trimmed.includes(":")) {
+      return trimmed;
+    }
+
+    return null;
+  }
+
+  if (Array.isArray(response)) {
+    for (const item of response) {
+      const id = extractDocumentId(item);
+      if (id) return id;
+    }
+    return null;
+  }
+
+  if (typeof response === "object") {
+    const directFields = [
+      "document_id",
+      "documentId",
+      "id",
+      "doc_id",
+      "docId",
+      "file_id",
+      "fileId",
+      "upload_id",
+      "uploadId",
+      "_id",
+      "uuid",
+      "key",
+      "document_key",
+      "documentKey",
+    ];
+
+    for (const field of directFields) {
+      const val = response[field];
+      if (val !== undefined && val !== null) {
+        if (typeof val === "string" && val.trim().length > 0) {
+          return val.trim();
+        }
+        if (typeof val === "number" && !isNaN(val)) {
+          return String(val);
+        }
+      }
+    }
+
+    const containerFields = [
+      "data",
+      "document",
+      "file",
+      "item",
+      "result",
+      "payload",
+      "record",
+      "details",
+      "doc",
+      "document_info",
+      "documentInfo",
+      "response",
+    ];
+
+    for (const field of containerFields) {
+      if (response[field] !== undefined && response[field] !== null) {
+        const nestedId = extractDocumentId(response[field]);
+        if (nestedId) return nestedId;
+      }
+    }
+
+    const arrayFields = [
+      "items",
+      "documents",
+      "files",
+      "results",
+      "document_ids",
+      "documentIds",
+      "doc_ids",
+      "docIds",
+      "file_ids",
+    ];
+
+    for (const field of arrayFields) {
+      const arr = response[field];
+      if (Array.isArray(arr) && arr.length > 0) {
+        const nestedId = extractDocumentId(arr[0]);
+        if (nestedId) return nestedId;
+      }
+    }
+
+    // Deep search in object string values matching a UUID
+    for (const [key, val] of Object.entries(response)) {
+      if (
+        typeof val === "string" &&
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val.trim()) &&
+        !["user_id", "conversation_id", "conv_id", "parent_id", "folder_id"].includes(key.toLowerCase())
+      ) {
+        return val.trim();
+      }
+    }
+  }
+
+  return null;
+}
+
+export function extractConversationId(response: any): string | null {
+  if (!response) return null;
+
+  if (typeof response === "string") {
+    const trimmed = response.trim();
+    if (!trimmed) return null;
+
+    if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        const parsedId = extractConversationId(parsed);
+        if (parsedId) return parsedId;
+      } catch {}
+    }
+
+    if (trimmed.includes("data:")) {
+      const lines = trimmed.split("\n");
+      for (let i = lines.length - 1; i >= 0; i--) {
+        const line = lines[i].trim();
+        if (line.startsWith("data:")) {
+          const jsonStr = line.slice(5).trim();
+          if (jsonStr && jsonStr !== "[DONE]") {
+            try {
+              const parsed = JSON.parse(jsonStr);
+              const id = extractConversationId(parsed);
+              if (id) return id;
+            } catch {}
+          }
+        }
+      }
+    }
+
+    const convFieldRegexes = [
+      /"conversation_id"\s*:\s*"([^"]+)"/i,
+      /"conversationId"\s*:\s*"([^"]+)"/i,
+      /"conv_id"\s*:\s*"([^"]+)"/i,
+      /"chat_id"\s*:\s*"([^"]+)"/i,
+    ];
+
+    for (const regex of convFieldRegexes) {
+      const match = trimmed.match(regex);
+      if (match && match[1]) {
+        const candidate = match[1].trim();
+        if (candidate && candidate.length > 5) {
+          return candidate;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  if (typeof response === "object") {
+    const direct =
+      response.conversation_id ||
+      response.conversationId ||
+      response.conv_id ||
+      response.data?.conversation_id ||
+      response.data?.conversationId ||
+      response.data?.conv_id ||
+      response.document?.conversation_id ||
+      response.data?.document?.conversation_id ||
+      null;
+
+    return direct ? String(direct).trim() : null;
+  }
+
+  return null;
 }
 
 // ================================================================
@@ -1083,16 +1382,55 @@ export async function uploadDocument(
   if (
     contentType?.includes(
       "application/json"
-    )
+    ) ||
+    contentType?.includes("text/json") ||
+    contentType?.includes("application/problem+json")
   ) {
-    data =
-      await response.json();
-  } else {
+    try {
+      data =
+        await response.json();
+    } catch {
+      data = null;
+    }
+  }
+
+  if (data === null) {
     const text =
       await response.text();
 
-    data =
-      text || null;
+    if (text) {
+      const trimmed = text.trim();
+      if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+        try {
+          data = JSON.parse(trimmed);
+        } catch {
+          data = text;
+        }
+      } else if (trimmed.includes("data:")) {
+        // SSE formatted response: parse chunks and merge
+        const lines = trimmed.split("\n");
+        let mergedObj: any = null;
+        for (const line of lines) {
+          const cleanLine = line.trim();
+          if (cleanLine.startsWith("data:")) {
+            const jsonStr = cleanLine.slice(5).trim();
+            if (jsonStr && jsonStr !== "[DONE]") {
+              try {
+                const parsed = JSON.parse(jsonStr);
+                if (parsed && typeof parsed === "object") {
+                  mergedObj = { ...(mergedObj || {}), ...parsed };
+                }
+              } catch {}
+            }
+          }
+        }
+        data = mergedObj || text;
+      } else {
+        data = text;
+      }
+    } else {
+      data = null;
+    }
   }
 
   // ==============================================================
@@ -1143,9 +1481,29 @@ export async function uploadDocument(
     );
   }
 
-  // ==============================================================
-  // Success
-  // ==============================================================
+  // Check headers for document ID fallback
+  const headerDocId =
+    response.headers.get("x-document-id") ||
+    response.headers.get("document-id");
+
+  if (headerDocId && typeof data === "object" && data !== null && !data.id && !data.document_id) {
+    data.document_id = headerDocId;
+  }
+
+  const extractedDocId = extractDocumentId(data);
+  const extractedFileName =
+    data?.filename ||
+    data?.file_name ||
+    data?.data?.filename ||
+    data?.data?.file_name ||
+    file.name;
+  const extractedConvId = extractConversationId(data);
+
+  console.log("DOCUMENT UPLOAD SUCCESS", {
+    documentId: extractedDocId,
+    fileName: extractedFileName,
+    conversationId: extractedConvId,
+  });
 
   return data;
 }

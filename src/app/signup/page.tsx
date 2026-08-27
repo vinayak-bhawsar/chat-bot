@@ -5,8 +5,8 @@ import Link from "next/link";
 import {
   Eye,
   EyeOff,
-  Sparkles,
 } from "lucide-react";
+import BrandLogo from "@/components/common/BrandLogo";
 
 import { apiRequest } from "@/lib/api";
 import { getLocalizedErrorMessage } from "@/i18n";
@@ -173,14 +173,12 @@ export default function SignupPage() {
                   justify-center
                   rounded-xl
                   border
-                  border-zinc-200
-                  bg-zinc-50
+                  border-cyan-100
+                  bg-cyan-50/60
+                  shadow-2xs
                 "
               >
-                <Sparkles
-                  className="h-5 w-5 text-zinc-900"
-                  strokeWidth={1.8}
-                />
+                <BrandLogo className="h-6 w-6" />
               </div>
 
               <div>

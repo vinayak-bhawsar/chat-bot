@@ -11,17 +11,46 @@ interface MarkdownMessageProps {
 }
 
 /**
+ * Strips raw backend UUIDs, document IDs, conversation IDs, and system references
+ * from assistant responses to keep the chat clean and human-friendly.
+ */
+function sanitizeBackendIds(text: string): string {
+  if (!text) return "";
+
+  let cleaned = text;
+
+  // 1. Remove raw citation patterns like `[Source: c3463679-255f-44d2-86ce-d3d8f330fe5e]` or `(Document ID: ...)`
+  cleaned = cleaned.replace(/\[(?:Source|Doc|Document|File)?\s*(?:ID)?:\s*[0-9a-fA-F-]{36}\]/gi, "");
+  cleaned = cleaned.replace(/\((?:Source|Doc|Document|File)?\s*(?:ID)?:\s*[0-9a-fA-F-]{36}\)/gi, "");
+
+  // 2. Remove standalone ID lines like `Document ID: c3463679-...` or `Conversation ID: ...` or `id: c3463679-...`
+  cleaned = cleaned.replace(/^(?:Document\s*ID|Conversation\s*ID|File\s*ID|doc_id|conversation_id|document_id|id)\s*[:=]\s*[0-9a-fA-F-]{20,}.*$/gim, "");
+
+  // 3. Remove inline UUIDs when labelled as IDs: e.g. `(id: 60284428-27ec-44f2-8924-4d877e8ef6e6)`
+  cleaned = cleaned.replace(/(?:id|ID|doc_id|document_id|conversation_id)\s*[:=]\s*[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/gi, "");
+
+  // 4. Remove bare UUIDs at line ends if they look like accidental backend dumps
+  cleaned = cleaned.replace(/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/gm, "");
+
+  // 5. Clean up redundant empty lines
+  cleaned = cleaned.replace(/\n{3,}/g, "\n\n");
+
+  return cleaned;
+}
+
+/**
  * Preprocesses markdown text from LLM / RAG backend to fix common formatting issues:
  * 1. Pseudo-tables (tab-separated or pipe-separated without GFM delimiters)
  * 2. Multi-line bullet points inside table cells (converts inner newlines to <br/>)
  * 3. Concatenated rows (| | -> |\n|) and trailing pipe cleanup
  * 4. Plain section titles (e.g. "Vinayak's Projects" -> "### Vinayak's Projects")
  * 5. Standalone dash/bullet points formatted as proper Markdown lists
+ * 6. Strips raw backend IDs from message output
  */
 function preprocessMarkdown(raw: string): string {
   if (!raw) return "";
 
-  let text = raw;
+  let text = sanitizeBackendIds(raw);
 
   // 1. Normalize tabs to pipe separators if used in table headers/rows
   const lines = text.split("\n");

@@ -1,5 +1,12 @@
-import { apiRequest, ApiError } from "@/lib/api";
+import {
+  apiRequest,
+  ApiError,
+  extractDocumentId,
+  extractConversationId,
+} from "@/lib/api";
 import { getLocalizedErrorMessage } from "@/i18n";
+
+export { extractDocumentId, extractConversationId };
 
 import {
   CreateFolderRequest,
@@ -15,12 +22,17 @@ import {
 export async function getDocuments(
   parentId: string | null = null,
   page: number = 1,
-  pageSize: number = 100
+  pageSize: number = 100,
+  conversationId?: string | null
 ): Promise<DocumentsResponse> {
   const params = new URLSearchParams();
 
   if (parentId) {
     params.append("parent_id", parentId);
+  }
+
+  if (conversationId !== undefined && conversationId !== null) {
+    params.append("conversation_id", conversationId);
   }
 
   params.append("page", String(page));
@@ -66,9 +78,9 @@ export async function createFolder(
   return response?.data ?? response;
 }
 
-// ================================================================
-// UPLOAD DOCUMENT
-// ================================================================
+import {
+  uploadDocument as apiUploadDocument,
+} from "@/lib/api";
 
 export async function uploadDocument(
   options: UploadDocumentOptions
@@ -81,33 +93,44 @@ export async function uploadDocument(
     );
   }
 
-  const formData = new FormData();
-  formData.append("file", options.file);
+  const response = await apiUploadDocument(options);
 
-  if (options.parent_id) {
-    formData.append("parent_id", options.parent_id);
-  }
+  const docItem = response?.data ?? response;
+  const extractedDocId = extractDocumentId(docItem) || extractDocumentId(response);
+  const extractedConvId = extractConversationId(docItem) || extractConversationId(response);
 
-  if (options.conversation_id) {
-    formData.append("conversation_id", options.conversation_id);
-  }
-
-  /*
-   * Do NOT manually set Content-Type.
-   *
-   * apiRequest() detects FormData and allows the browser
-   * to create the multipart boundary.
-   */
-
-  const response = await apiRequest<any>(
-    "/documents/upload",
-    {
-      method: "POST",
-      body: formData,
+  let resultDoc: any = docItem;
+  if (typeof resultDoc !== "object" || resultDoc === null) {
+    resultDoc = {
+      id: extractedDocId,
+      document_id: extractedDocId,
+      file_name: options.file.name,
+      filename: options.file.name,
+      conversation_id: extractedConvId,
+      is_folder: false,
+    };
+  } else {
+    if (!resultDoc.id && extractedDocId) {
+      resultDoc.id = extractedDocId;
     }
-  );
+    if (!resultDoc.document_id && extractedDocId) {
+      resultDoc.document_id = extractedDocId;
+    }
+    if (!resultDoc.conversation_id && extractedConvId) {
+      resultDoc.conversation_id = extractedConvId;
+    }
+    if (!resultDoc.file_name && !resultDoc.filename) {
+      resultDoc.file_name = options.file.name;
+    }
+  }
 
-  return response?.data ?? response;
+  console.log("DOCUMENT UPLOAD SUCCESS", {
+    documentId: extractedDocId,
+    fileName: resultDoc?.file_name || resultDoc?.filename || options.file.name,
+    conversationId: extractedConvId,
+  });
+
+  return resultDoc as DocumentItem;
 }
 
 // ================================================================
