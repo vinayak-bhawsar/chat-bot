@@ -39,6 +39,7 @@ import {
 } from "@/lib/chat";
 
 import {
+  apiRequest,
   getAccessToken,
   uploadDocument,
   getDocuments,
@@ -50,6 +51,7 @@ import {
   saveAttachmentMetadata,
   migrateAttachmentMetadata,
 } from "@/lib/attachmentStorage";
+import { generateChatTitle, resolveConversationTitle } from "@/lib/chatTitle";
 
 import {
   getLocalizedErrorMessage,
@@ -283,23 +285,28 @@ interface MainContentProps {
       | Conversation["messages"]
       | ((
         messages: Conversation["messages"]
-      ) => Conversation["messages"])
+      ) => Conversation["messages"]),
+    newTitle?: string
   ) => void;
 
   onReplaceConversationId?: (
     temporaryId: string,
-    backendId: string
+    backendId: string,
+    backendTitle?: string
   ) => void;
 
   onUpdateConversationTitle?: (
     conversationId: string,
     title: string
   ) => void;
+
+  isLoadingHistory?: boolean;
 }
 
 export default function MainContent({
   activeConversationId,
   conversations,
+  isLoadingHistory = false,
   onNewChat,
   onUpdateConversation,
   onReplaceConversationId,
@@ -378,105 +385,7 @@ export default function MainContent({
       conversations,
     ]);
 
-  // ==============================================================
-  // DOCUMENT SELECT EVENT
-  // ==============================================================
 
-  useEffect(() => {
-    const handleDocumentSelect =
-      (event: Event) => {
-        const customEvent =
-          event as CustomEvent;
-
-        const doc =
-          customEvent.detail;
-
-        console.log(
-          "DOCUMENT SELECT EVENT:",
-          doc
-        );
-
-        // --------------------------------------------------------
-        // Document was cleared
-        // --------------------------------------------------------
-
-        if (!doc) {
-          setUploadedDocument(
-            null
-          );
-
-          return;
-        }
-
-        // --------------------------------------------------------
-        // Don't select folder
-        // --------------------------------------------------------
-
-        if (
-          doc.is_folder === true
-        ) {
-          return;
-        }
-
-        // --------------------------------------------------------
-        // IMPORTANT:
-        // The backend document ID MUST come from doc.id
-        // --------------------------------------------------------
-
-        const documentId = extractDocumentId(doc);
-
-        if (!documentId) {
-          console.error(
-            "Document selected from Knowledge Base but ID is missing:",
-            doc
-          );
-          return;
-        }
-
-        const filename =
-          typeof doc.file_name === "string" && doc.file_name
-            ? doc.file_name
-            : typeof doc.filename === "string" && doc.filename
-              ? doc.filename
-              : "Document";
-
-        // --------------------------------------------------------
-        // Store document for current input (Global Knowledge Base)
-        // --------------------------------------------------------
-
-        setUploadedDocument({
-          file: null,
-          documentId,
-          filename,
-          source: "knowledge_base",
-        });
-
-        // --------------------------------------------------------
-        // IMPORTANT DEBUG
-        // --------------------------------------------------------
-
-        console.log(
-          "DOCUMENT STORED FOR CHAT (KNOWLEDGE BASE):",
-          {
-            documentId,
-            filename,
-            source: "knowledge_base",
-          }
-        );
-      };
-
-    window.addEventListener(
-      "document:select",
-      handleDocumentSelect
-    );
-
-    return () => {
-      window.removeEventListener(
-        "document:select",
-        handleDocumentSelect
-      );
-    };
-  }, []);
 
   // ==============================================================
   // GLOBAL LISTENER TO OPEN PDF IN OPEN FORMAT
@@ -711,6 +620,15 @@ export default function MainContent({
     }
 
     // ============================================================
+    // INSTANT CONVERSATION TITLE
+    // ============================================================
+
+    const instantTitle = generateChatTitle(
+      question && question.trim() ? question.trim() : null,
+      filename || uploadedDocument?.filename || documentFile?.name || null
+    );
+
+    // ============================================================
     // GET / CREATE CONVERSATION
     // ============================================================
 
@@ -726,12 +644,21 @@ export default function MainContent({
           newConversationId,
 
         title:
-          "New Chat",
+          instantTitle,
 
         messages:
           [],
       };
+    } else if (
+      !conversation.title ||
+      conversation.title === "New Chat" ||
+      conversation.title === "Chat"
+    ) {
+      conversation.title = instantTitle;
+      onUpdateConversationTitle?.(conversation.id, instantTitle);
     }
+
+    const originalTempId = conversation.id;
 
     // ============================================================
     // UPLOAD LOCAL FILE FIRST
@@ -870,11 +797,15 @@ export default function MainContent({
           content: `⚠️ **Upload Failed**: ${errMsg}\n\nThe backend server on Render may be waking up from sleep. Please wait a few seconds and try sending your document again.`,
         };
 
-        onUpdateConversation(conversation.id, [
-          ...conversation.messages,
-          failedUserMessage,
-          failedAssistantMessage,
-        ]);
+        onUpdateConversation(
+          conversation.id,
+          [
+            ...conversation.messages,
+            failedUserMessage,
+            failedAssistantMessage,
+          ],
+          conversation.title || instantTitle
+        );
 
         return;
       } finally {
@@ -1097,8 +1028,12 @@ export default function MainContent({
     };
 
     // ============================================================
-    // UPDATE UI
+    // UPDATE UI WITH INSTANT TITLE
     // ============================================================
+
+    if (instantTitle && instantTitle !== "New Chat") {
+      onUpdateConversationTitle?.(conversation.id, instantTitle);
+    }
 
     onUpdateConversation(
       conversation.id,
@@ -1106,7 +1041,8 @@ export default function MainContent({
         ...conversation.messages,
         userMessage,
         assistantMessage,
-      ]
+      ],
+      conversation.title || instantTitle
     );
 
     // ============================================================
@@ -1138,30 +1074,65 @@ export default function MainContent({
           // ======================================================
 
           onConversation: (
-            conversationId
+            conversationId,
+            serverTitle
           ) => {
             console.log(
               "BACKEND CONVERSATION ID:",
-              conversationId
+              conversationId,
+              "SERVER TITLE:",
+              serverTitle
             );
+
+            if (
+              serverTitle &&
+              serverTitle !== "New Chat" &&
+              serverTitle !== "Chat"
+            ) {
+              onUpdateConversationTitle?.(
+                conversationId,
+                serverTitle
+              );
+            }
 
             if (isAuthenticated) {
               backendConversationId =
                 conversationId;
+              conversation.id =
+                conversationId;
 
-              if (
-                conversationId !==
-                conversation.id
-              ) {
-                onReplaceConversationId?.(
-                  conversation.id,
-                  conversationId
-                );
-                migrateAttachmentMetadata(
-                  conversation.id,
-                  conversationId
-                );
-              }
+              onReplaceConversationId?.(
+                originalTempId,
+                conversationId,
+                serverTitle || conversation.title || instantTitle
+              );
+              migrateAttachmentMetadata(
+                originalTempId,
+                conversationId
+              );
+            }
+          },
+
+          // ======================================================
+          // TITLE UPDATE FROM SSE
+          // ======================================================
+
+          onTitle: (
+            serverTitle
+          ) => {
+            if (
+              serverTitle &&
+              serverTitle !== "New Chat" &&
+              serverTitle !== "Chat"
+            ) {
+              const targetId =
+                backendConversationId ??
+                conversation.id;
+
+              onUpdateConversationTitle?.(
+                targetId,
+                serverTitle
+              );
             }
           },
 
@@ -1215,25 +1186,25 @@ export default function MainContent({
 
           onDone: (
             answer,
-            conversationId
+            conversationId,
+            serverTitle
           ) => {
             if (
               conversationId
             ) {
               backendConversationId =
                 conversationId;
+              conversation.id =
+                conversationId;
 
-              if (
-                isAuthenticated &&
-                conversationId !==
-                conversation.id
-              ) {
+              if (isAuthenticated) {
                 onReplaceConversationId?.(
-                  conversation.id,
-                  conversationId
+                  originalTempId,
+                  conversationId,
+                  serverTitle || conversation.title || instantTitle
                 );
                 migrateAttachmentMetadata(
-                  conversation.id,
+                  originalTempId,
                   conversationId
                 );
               }
@@ -1242,6 +1213,46 @@ export default function MainContent({
             const targetId =
               backendConversationId ??
               conversation.id;
+
+            if (
+              serverTitle &&
+              serverTitle !== "New Chat" &&
+              serverTitle !== "Chat"
+            ) {
+              onUpdateConversationTitle?.(
+                targetId,
+                serverTitle
+              );
+            }
+
+            // Automatic background title sync from server (no refresh needed)
+            if (
+              isAuthenticated &&
+              targetId &&
+              !targetId.startsWith("temp-") &&
+              !targetId.startsWith("guest-")
+            ) {
+              const syncTargetId = targetId;
+              setTimeout(async () => {
+                try {
+                  const res = await apiRequest<any>(
+                    `/conversation/${encodeURIComponent(syncTargetId)}`,
+                    { method: "GET" }
+                  );
+                  const d = res?.data || res;
+                  const sTitle = d?.title?.trim();
+                  if (
+                    sTitle &&
+                    sTitle !== "New Chat" &&
+                    sTitle !== "Chat"
+                  ) {
+                    onUpdateConversationTitle?.(syncTargetId, sTitle);
+                  }
+                } catch {
+                  // Non-blocking
+                }
+              }, 1200);
+            }
 
             console.log(
               "CHAT COMPLETED:",
@@ -1283,29 +1294,6 @@ export default function MainContent({
                       };
                     }
                   )
-              );
-            }
-
-            // ----------------------------------------------------
-            // Update title
-            // ----------------------------------------------------
-
-            if (
-              onUpdateConversationTitle &&
-              targetId
-            ) {
-              const title =
-                question.length >
-                  50
-                  ? `${question.slice(
-                    0,
-                    50
-                  )}...`
-                  : question;
-
-              onUpdateConversationTitle(
-                targetId,
-                title
               );
             }
 
@@ -1493,7 +1481,48 @@ export default function MainContent({
               ========================================================== */}
           <div className="min-h-0 flex-1 overflow-y-auto px-3 py-6 sm:px-4">
             <div className="mx-auto w-full max-w-3xl space-y-4">
-              {activeConversation.messages.map((message: any) => {
+              {isLoadingHistory ? (
+                /* ======================================================
+                   SKELETON LOADING STATE (Smooth Transition)
+                   ====================================================== */
+                <div className="space-y-6 animate-pulse py-4">
+                  {/* User Skeleton Bubble */}
+                  <div className="flex justify-end items-end gap-2.5">
+                    <div className="space-y-2 max-w-[65%] w-full flex flex-col items-end">
+                      <div className="h-10 w-44 rounded-2xl rounded-br-xs bg-[#56C5D9]/20" />
+                    </div>
+                    <div className="h-7.5 w-7.5 shrink-0 rounded-xl bg-gradient-to-tr from-[#56C5D9]/40 to-[#2ba8be]/40" />
+                  </div>
+
+                  {/* AI Skeleton Bubble */}
+                  <div className="flex justify-start items-start gap-3">
+                    <div className="h-8 w-8 shrink-0 rounded-xl bg-zinc-200" />
+                    <div className="space-y-2.5 flex-1 max-w-[85%] pt-1">
+                      <div className="h-4 w-11/12 rounded-md bg-zinc-200/90" />
+                      <div className="h-4 w-4/5 rounded-md bg-zinc-200/80" />
+                      <div className="h-4 w-3/5 rounded-md bg-zinc-200/60" />
+                    </div>
+                  </div>
+
+                  {/* Second User Skeleton Bubble */}
+                  <div className="flex justify-end items-end gap-2.5 pt-2">
+                    <div className="space-y-2 max-w-[65%] w-full flex flex-col items-end">
+                      <div className="h-9 w-60 rounded-2xl rounded-br-xs bg-[#56C5D9]/20" />
+                    </div>
+                    <div className="h-7.5 w-7.5 shrink-0 rounded-xl bg-gradient-to-tr from-[#56C5D9]/40 to-[#2ba8be]/40" />
+                  </div>
+
+                  {/* Second AI Skeleton Bubble */}
+                  <div className="flex justify-start items-start gap-3">
+                    <div className="h-8 w-8 shrink-0 rounded-xl bg-zinc-200" />
+                    <div className="space-y-2.5 flex-1 max-w-[85%] pt-1">
+                      <div className="h-4 w-full rounded-md bg-zinc-200/90" />
+                      <div className="h-4 w-5/6 rounded-md bg-zinc-200/70" />
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                activeConversation.messages.map((message: any) => {
                 const isUserMessage =
                   message.role === "user" ||
                   message.role === "human" ||
@@ -1615,7 +1644,7 @@ export default function MainContent({
                     </div>
                   </div>
                 );
-              })}
+              }))}
             </div>
           </div>
 

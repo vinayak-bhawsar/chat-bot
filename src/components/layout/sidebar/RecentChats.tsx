@@ -9,6 +9,7 @@ import {
 
 import { Conversation } from "@/types/chat";
 import { useAuth } from "@/context/AuthContext";
+import { resolveConversationTitle } from "@/lib/chatTitle";
 
 interface RecentChatsProps {
   collapsed: boolean;
@@ -35,43 +36,8 @@ interface RecentChatsProps {
     | null;
 }
 
-import { cleanDisplayName } from "@/lib/fileTypes";
-
 function getCleanChatTitle(conversation: Conversation): string {
-  const rawTitle = (conversation.title || "").trim();
-  const uuidPattern = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/i;
-
-  if (
-    rawTitle &&
-    !uuidPattern.test(rawTitle) &&
-    !rawTitle.toLowerCase().startsWith("conversation ") &&
-    !rawTitle.toLowerCase().startsWith("chat_")
-  ) {
-    return rawTitle;
-  }
-
-  const firstUserMsg = conversation.messages?.find(
-    (m) =>
-      m.role === "user" &&
-      m.content &&
-      m.content.trim() &&
-      m.content !== "Please summarize this document." &&
-      m.content !== "Please analyze this image."
-  );
-
-  if (firstUserMsg?.content) {
-    const clean = firstUserMsg.content.trim().replace(/\n+/g, " ");
-    return clean.length > 34 ? `${clean.slice(0, 34)}...` : clean;
-  }
-
-  const attachment = conversation.messages?.find(
-    (m) => m.attachment?.filename
-  )?.attachment;
-  if (attachment?.filename) {
-    return cleanDisplayName(attachment.filename, "Document Chat");
-  }
-
-  return "New Chat";
+  return resolveConversationTitle(conversation);
 }
 
 export default function RecentChats({

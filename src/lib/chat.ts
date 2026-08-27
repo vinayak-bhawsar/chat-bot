@@ -11,9 +11,10 @@ const API_URL =
   "https://rag-chatbot-v2hu.onrender.com";
 
 export interface ChatStreamHandlers {
-  onConversation?: (conversationId: string) => void;
+  onConversation?: (conversationId: string, title?: string) => void;
   onMessage?: (content: string) => void;
-  onDone?: (answer: string, conversationId: string) => void;
+  onTitle?: (title: string) => void;
+  onDone?: (answer: string, conversationId: string, title?: string) => void;
   onError?: (message: string, conversationId?: string) => void;
 }
 
@@ -283,14 +284,24 @@ function processSSEEvent(
     data?.type ||
     (data?.delta || data?.content || data?.text ? "delta" : "") ||
     (data?.answer ? "done" : "") ||
+    (data?.title || data?.conversation_title ? "title" : "") ||
     (data?.error || data?.detail ? "error" : "")
   ).toLowerCase();
+
+  const eventTitle =
+    data?.title ||
+    data?.conversation_title ||
+    (typeof data?.data === "object" ? data?.data?.title : undefined);
+
+  if (eventTitle && typeof eventTitle === "string" && eventTitle.trim()) {
+    handlers.onTitle?.(eventTitle.trim());
+  }
 
   // START
   if (inferredType === "start") {
     const conversationId = data?.conversation_id || data?.id;
     if (conversationId) {
-      handlers.onConversation?.(conversationId);
+      handlers.onConversation?.(conversationId, eventTitle?.trim());
     }
     return;
   }
@@ -304,12 +315,20 @@ function processSSEEvent(
     return;
   }
 
+  // TITLE
+  if (inferredType === "title") {
+    if (eventTitle && typeof eventTitle === "string" && eventTitle.trim()) {
+      handlers.onTitle?.(eventTitle.trim());
+    }
+    return;
+  }
+
   // DONE
   if (inferredType === "done" || inferredType === "complete") {
     const answer =
       data?.answer ?? data?.text_content ?? data?.content ?? data?.text ?? "";
     const conversationId = data?.conversation_id || data?.id || "";
-    handlers.onDone?.(answer, conversationId);
+    handlers.onDone?.(answer, conversationId, eventTitle?.trim());
     return;
   }
 
@@ -335,7 +354,7 @@ function processSSEEvent(
 
   // FALLBACKS
   if (data?.answer) {
-    handlers.onDone?.(data.answer, data.conversation_id || "");
+    handlers.onDone?.(data.answer, data.conversation_id || "", eventTitle?.trim());
     return;
   }
 

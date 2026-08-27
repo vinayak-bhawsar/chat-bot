@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 
 import {
   ArrowLeft,
@@ -63,6 +64,12 @@ export default function DocumentsPanel({
     isLoading: authLoading,
   } = useAuth();
 
+  const [isMounted, setIsMounted] = useState(false);
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
   // ==============================================================
   // CURRENT FOLDER
   // ==============================================================
@@ -97,17 +104,6 @@ export default function DocumentsPanel({
     setDocuments,
   ] = useState<DocumentItem[]>(
     []
-  );
-
-  // ==============================================================
-  // SELECTED DOCUMENT
-  // ==============================================================
-
-  const [
-    selectedDocumentId,
-    setSelectedDocumentId,
-  ] = useState<string | null>(
-    null
   );
 
   // ==============================================================
@@ -629,122 +625,6 @@ export default function DocumentsPanel({
   };
 
   // ==============================================================
-  // SELECT DOCUMENT
-  // ==============================================================
-
-  const selectDocument = (
-    item: DocumentItem
-  ) => {
-    // ------------------------------------------------------------
-    // Never select folder
-    // ------------------------------------------------------------
-
-    if (item.is_folder) {
-      return;
-    }
-
-    // ------------------------------------------------------------
-    // Validate backend ID
-    // ------------------------------------------------------------
-
-    if (
-      !item.id ||
-      typeof item.id !==
-      "string"
-    ) {
-      console.error(
-        "Document does not contain a valid ID:",
-        item
-      );
-
-      setError(
-        "Unable to select this document because its ID is missing."
-      );
-
-      return;
-    }
-
-    // ------------------------------------------------------------
-    // REAL BACKEND DOCUMENT ID
-    // ------------------------------------------------------------
-
-    const documentId =
-      item.id.trim();
-
-    // ------------------------------------------------------------
-    // SAVE LOCALLY
-    // ------------------------------------------------------------
-
-    setSelectedDocumentId(
-      documentId
-    );
-
-    // ------------------------------------------------------------
-    // EVENT PAYLOAD
-    // ------------------------------------------------------------
-
-    const detail = {
-      id: documentId,
-
-      file_name:
-        item.file_name,
-
-      is_folder:
-        false,
-
-      mime_type:
-        item.mime_type,
-
-      size_bytes:
-        item.size_bytes,
-    };
-
-    // ------------------------------------------------------------
-    // DEBUG
-    // ------------------------------------------------------------
-
-    console.log(
-      "===================================="
-    );
-
-    console.log(
-      "DOCUMENT SELECTED IN SIDEBAR:"
-    );
-
-    console.log(
-      detail
-    );
-
-    console.log(
-      "DOCUMENT ID:",
-      documentId
-    );
-
-    console.log(
-      "===================================="
-    );
-
-    // ------------------------------------------------------------
-    // SEND TO MAIN CONTENT
-    // ------------------------------------------------------------
-
-    window.dispatchEvent(
-      new CustomEvent(
-        "document:select",
-        {
-          detail,
-        }
-      )
-    );
-
-    // ------------------------------------------------------------
-    // CLOSE DOCUMENT SIDEBAR
-    // ------------------------------------------------------------
-
-    onClose();
-  };
-
-  // ==============================================================
   // BREADCRUMB
   // ==============================================================
 
@@ -794,24 +674,6 @@ export default function DocumentsPanel({
         await deleteDocument(
           deleteTarget.id
         );
-
-        if (
-          selectedDocumentId ===
-          deleteTarget.id
-        ) {
-          setSelectedDocumentId(
-            null
-          );
-
-          window.dispatchEvent(
-            new CustomEvent(
-              "document:select",
-              {
-                detail: null,
-              }
-            )
-          );
-        }
 
         setDeleteTarget(
           null
@@ -1132,17 +994,10 @@ export default function DocumentsPanel({
             {!loading &&
               documents.length > 0 &&
               documents.map((item) => {
-                const isSelected =
-                  !item.is_folder && selectedDocumentId === item.id;
-
                 return (
                   <div key={item.id} className="group relative">
                     <div
-                      className={`flex w-full items-center rounded-xl px-2.5 py-2 text-left text-xs transition-all duration-150 border ${
-                        isSelected
-                          ? "bg-white text-zinc-950 font-semibold border-zinc-200 shadow-2xs"
-                          : "border-transparent text-zinc-600 hover:bg-white hover:border-zinc-200/70 hover:text-zinc-900 hover:shadow-2xs"
-                      }`}
+                      className="flex w-full items-center rounded-xl px-2.5 py-2 text-left text-xs transition-all duration-150 border border-transparent text-zinc-600 hover:bg-white hover:border-zinc-200/70 hover:text-zinc-900 hover:shadow-2xs"
                     >
                       {/* ICON */}
                       <div className="shrink-0 mr-2.5">
@@ -1196,13 +1051,23 @@ export default function DocumentsPanel({
                             openFolder(item);
                             return;
                           }
-                          selectDocument(item);
+                          if (typeof window !== "undefined") {
+                            window.dispatchEvent(
+                              new CustomEvent("pdf:open", {
+                                detail: {
+                                  id: item.id,
+                                  documentId: item.id,
+                                  filename: item.file_name,
+                                },
+                              })
+                            );
+                          }
                         }}
                         className="min-w-0 flex-1 cursor-pointer text-left"
                         title={
                           item.is_folder
                             ? "Open folder"
-                            : "Select document for chat"
+                            : "Preview document"
                         }
                       >
                         <span className="block truncate text-xs font-semibold text-zinc-900">
@@ -1213,14 +1078,8 @@ export default function DocumentsPanel({
                           <div className="mt-0.5 flex items-center gap-1.5 text-[10px] text-zinc-400">
                             <span>{formatSize(item.size_bytes)}</span>
                             <span>•</span>
-                            <span
-                              className={
-                                isSelected
-                                  ? "font-semibold text-[#2ba8be]"
-                                  : "text-zinc-500"
-                              }
-                            >
-                              {isSelected ? "Active in Chat" : "Ready"}
+                            <span className="text-zinc-500">
+                              Ready
                             </span>
                           </div>
                         )}
@@ -1278,233 +1137,399 @@ export default function DocumentsPanel({
       </div>
 
       {/* ==========================================================
-          CREATE FOLDER MODAL
+          CREATE FOLDER MODAL (Full Viewport Portal)
           ========================================================== */}
 
-      {showFolderModal && (
-        <div
-          className="
-            fixed
-            inset-0
-            z-[100]
-            flex
-            items-center
-            justify-center
-            bg-black/30
-            px-4
-          "
-        >
+      {isMounted &&
+        showFolderModal &&
+        createPortal(
           <div
             className="
-              w-full
-              max-w-sm
-              rounded-2xl
-              bg-white
-              p-5
-              shadow-2xl
+              fixed
+              inset-0
+              z-[100]
+              flex
+              items-center
+              justify-center
+              bg-black/30
+              px-4
+              backdrop-blur-sm
+              animate-in
+              fade-in
+              duration-150
             "
+            onClick={() => {
+              if (!creatingFolder) {
+                setShowFolderModal(false);
+                setFolderName("");
+              }
+            }}
+            role="presentation"
           >
-            <div className="flex items-center justify-between">
-              <h3 className="text-base font-semibold text-zinc-900">
-                New Folder
-              </h3>
-
-              <button
-                type="button"
-                onClick={() =>
-                  setShowFolderModal(
-                    false
-                  )
-                }
-              >
-                <X className="h-4 w-4 text-zinc-500" />
-              </button>
-            </div>
-
-            <input
-              autoFocus
-              value={
-                folderName
-              }
-              onChange={(
-                event
-              ) =>
-                setFolderName(
-                  event.target.value
-                )
-              }
-              onKeyDown={(
-                event
-              ) => {
-                if (
-                  event.key ===
-                  "Enter"
-                ) {
-                  void handleCreateFolder();
-                }
-              }}
-              placeholder="Folder name"
+            <div
               className="
-                mt-4
                 w-full
-                rounded-lg
+                max-w-sm
+                rounded-2xl
                 border
-                border-zinc-300
-                px-3
-                py-2.5
-                text-sm
-                outline-none
-                focus:border-zinc-500
+                border-zinc-200
+                bg-white
+                p-6
+                shadow-2xl
+                animate-in
+                zoom-in-95
+                duration-150
               "
-            />
+              onClick={(event) => {
+                event.stopPropagation();
+              }}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="create-folder-title"
+            >
+              {/* Header */}
+              <div className="flex items-start justify-between gap-4">
+                <div
+                  className="
+                    flex
+                    h-10
+                    w-10
+                    shrink-0
+                    items-center
+                    justify-center
+                    rounded-full
+                    bg-[#56C5D9]/15
+                    text-[#2ba8be]
+                    border
+                    border-[#56C5D9]/30
+                  "
+                >
+                  <FolderPlus className="h-5 w-5" />
+                </div>
 
-            <div className="mt-4 flex justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setShowFolderModal(
-                    false
-                  );
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowFolderModal(false);
+                    setFolderName("");
+                  }}
+                  disabled={creatingFolder}
+                  aria-label="Close"
+                  className="
+                    flex
+                    h-8
+                    w-8
+                    items-center
+                    justify-center
+                    rounded-lg
+                    text-zinc-400
+                    transition
+                    hover:bg-zinc-100
+                    hover:text-zinc-700
+                    disabled:cursor-not-allowed
+                    disabled:opacity-40
+                  "
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
 
-                  setFolderName(
-                    ""
-                  );
-                }}
-                className="
-                  rounded-lg
-                  border
-                  border-zinc-300
-                  px-4
-                  py-2
-                  text-sm
-                "
-              >
-                Cancel
-              </button>
+              {/* Content */}
+              <div className="mt-4">
+                <h2
+                  id="create-folder-title"
+                  className="text-lg font-semibold text-zinc-900"
+                >
+                  New Folder
+                </h2>
 
-              <button
-                type="button"
-                disabled={
-                  creatingFolder ||
-                  !folderName.trim()
-                }
-                onClick={() =>
-                  void handleCreateFolder()
-                }
-                className="
-                  rounded-lg
-                  bg-zinc-900
-                  px-4
-                  py-2
-                  text-sm
-                  font-medium
-                  text-white
-                  disabled:opacity-50
-                "
-              >
-                {creatingFolder
-                  ? "Creating..."
-                  : "Create"}
-              </button>
+                <p className="mt-1 text-sm text-zinc-500">
+                  Create a folder inside{" "}
+                  <span className="font-medium text-zinc-700">
+                    {folderPath[folderPath.length - 1]?.name ?? "Knowledge Base"}
+                  </span>
+                  .
+                </p>
+
+                <input
+                  autoFocus
+                  value={folderName}
+                  onChange={(event) => setFolderName(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && folderName.trim() && !creatingFolder) {
+                      event.preventDefault();
+                      void handleCreateFolder();
+                    } else if (event.key === "Escape" && !creatingFolder) {
+                      setShowFolderModal(false);
+                      setFolderName("");
+                    }
+                  }}
+                  placeholder="Folder name"
+                  disabled={creatingFolder}
+                  className="
+                    mt-4
+                    w-full
+                    rounded-xl
+                    border
+                    border-zinc-300
+                    px-3.5
+                    py-2.5
+                    text-sm
+                    text-zinc-900
+                    placeholder:text-zinc-400
+                    outline-none
+                    transition
+                    focus:border-[#2ba8be]
+                    focus:ring-2
+                    focus:ring-[#56C5D9]/20
+                    disabled:bg-zinc-50
+                    disabled:text-zinc-400
+                  "
+                />
+              </div>
+
+              {/* Actions */}
+              <div className="mt-6 flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowFolderModal(false);
+                    setFolderName("");
+                  }}
+                  disabled={creatingFolder}
+                  className="
+                    rounded-lg
+                    border
+                    border-zinc-200
+                    px-4
+                    py-2
+                    text-sm
+                    font-medium
+                    text-zinc-700
+                    transition
+                    hover:bg-zinc-50
+                    disabled:cursor-not-allowed
+                    disabled:opacity-50
+                  "
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="button"
+                  disabled={creatingFolder || !folderName.trim()}
+                  onClick={() => void handleCreateFolder()}
+                  className="
+                    flex
+                    min-w-[90px]
+                    items-center
+                    justify-center
+                    gap-2
+                    rounded-lg
+                    bg-zinc-900
+                    px-4
+                    py-2
+                    text-sm
+                    font-medium
+                    text-white
+                    transition
+                    hover:bg-zinc-800
+                    disabled:cursor-not-allowed
+                    disabled:opacity-50
+                  "
+                >
+                  {creatingFolder ? (
+                    <>
+                      <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+                      Creating...
+                    </>
+                  ) : (
+                    "Create"
+                  )}
+                </button>
+              </div>
             </div>
-          </div>
-        </div>
-      )}
+          </div>,
+          document.body
+        )}
 
       {/* ==========================================================
-          DELETE MODAL
+          DELETE MODAL (Full Viewport Portal - Matches Main Sidebar)
           ========================================================== */}
 
-      {deleteTarget && (
-        <div
-          className="
-            fixed
-            inset-0
-            z-[100]
-            flex
-            items-center
-            justify-center
-            bg-black/30
-            px-4
-          "
-        >
+      {isMounted &&
+        deleteTarget &&
+        createPortal(
           <div
             className="
-              w-full
-              max-w-sm
-              rounded-2xl
-              bg-white
-              p-5
-              shadow-2xl
+              fixed
+              inset-0
+              z-[100]
+              flex
+              items-center
+              justify-center
+              bg-black/30
+              px-4
+              backdrop-blur-sm
+              animate-in
+              fade-in
+              duration-150
             "
-          >
-            <h3 className="text-base font-semibold text-zinc-900">
-              Delete{" "}
-              {deleteTarget.is_folder
-                ? "Folder"
-                : "File"}
-              ?
-            </h3>
-
-            <p className="mt-2 text-sm text-zinc-500">
-              Are you sure you want
-              to delete "
-              {
-                deleteTarget.file_name
+            onClick={() => {
+              if (!deletingId) {
+                setDeleteTarget(null);
               }
-              "?
-            </p>
+            }}
+            role="presentation"
+          >
+            <div
+              className="
+                w-full
+                max-w-sm
+                rounded-2xl
+                border
+                border-zinc-200
+                bg-white
+                p-6
+                shadow-2xl
+                animate-in
+                zoom-in-95
+                duration-150
+              "
+              onClick={(event) => {
+                event.stopPropagation();
+              }}
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="delete-document-title"
+            >
+              {/* Header */}
+              <div className="flex items-start justify-between gap-4">
+                <div
+                  className="
+                    flex
+                    h-10
+                    w-10
+                    shrink-0
+                    items-center
+                    justify-center
+                    rounded-full
+                    bg-red-50
+                    text-red-600
+                  "
+                >
+                  <Trash2 className="h-5 w-5" />
+                </div>
 
-            <div className="mt-5 flex justify-end gap-2">
-              <button
-                type="button"
-                disabled={
-                  !!deletingId
-                }
-                onClick={() =>
-                  setDeleteTarget(
-                    null
-                  )
-                }
-                className="
-                  rounded-lg
-                  border
-                  border-zinc-300
-                  px-4
-                  py-2
-                  text-sm
-                "
-              >
-                Cancel
-              </button>
+                <button
+                  type="button"
+                  onClick={() => setDeleteTarget(null)}
+                  disabled={!!deletingId}
+                  aria-label="Close"
+                  className="
+                    flex
+                    h-8
+                    w-8
+                    items-center
+                    justify-center
+                    rounded-lg
+                    text-zinc-400
+                    transition
+                    hover:bg-zinc-100
+                    hover:text-zinc-700
+                    disabled:cursor-not-allowed
+                    disabled:opacity-40
+                  "
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
 
-              <button
-                type="button"
-                disabled={
-                  !!deletingId
-                }
-                onClick={() =>
-                  void handleDelete()
-                }
-                className="
-                  rounded-lg
-                  bg-red-600
-                  px-4
-                  py-2
-                  text-sm
-                  font-medium
-                  text-white
-                  disabled:opacity-50
-                "
-              >
-                {deletingId
-                  ? "Deleting..."
-                  : "Delete"}
-              </button>
+              {/* Content */}
+              <div className="mt-4">
+                <h2
+                  id="delete-document-title"
+                  className="text-lg font-semibold text-zinc-900"
+                >
+                  Delete {deleteTarget.is_folder ? "folder" : "document"}?
+                </h2>
+
+                <p className="mt-2 text-sm leading-6 text-zinc-500">
+                  Are you sure you want to delete{" "}
+                  <span className="font-medium text-zinc-700">
+                    &quot;{deleteTarget.file_name}&quot;
+                  </span>
+                  ?
+                </p>
+
+                <p className="mt-1 text-sm leading-6 text-zinc-500">
+                  {deleteTarget.is_folder
+                    ? "This folder and all its contents will be permanently deleted."
+                    : "This document will be permanently deleted from your Knowledge Base."}
+                </p>
+              </div>
+
+              {/* Actions */}
+              <div className="mt-6 flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setDeleteTarget(null)}
+                  disabled={!!deletingId}
+                  className="
+                    rounded-lg
+                    border
+                    border-zinc-200
+                    px-4
+                    py-2
+                    text-sm
+                    font-medium
+                    text-zinc-700
+                    transition
+                    hover:bg-zinc-50
+                    disabled:cursor-not-allowed
+                    disabled:opacity-50
+                  "
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => void handleDelete()}
+                  disabled={!!deletingId}
+                  className="
+                    flex
+                    min-w-[90px]
+                    items-center
+                    justify-center
+                    gap-2
+                    rounded-lg
+                    bg-red-600
+                    px-4
+                    py-2
+                    text-sm
+                    font-medium
+                    text-white
+                    transition
+                    hover:bg-red-700
+                    disabled:cursor-not-allowed
+                    disabled:opacity-60
+                  "
+                >
+                  {deletingId ? (
+                    <>
+                      <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+                      Deleting...
+                    </>
+                  ) : (
+                    "Delete"
+                  )}
+                </button>
+              </div>
             </div>
-          </div>
-        </div>
-      )}
+          </div>,
+          document.body
+        )}
     </>
   );
 }
