@@ -50,32 +50,38 @@ export async function streamChat(
   // BUILD PAYLOAD (Authenticated users only)
   // ==============================================================
 
-  const buildPayload = (convId: string | null) => {
-    const payload: {
-      question: string;
-      conversation_id: string | null;
-      document_id?: string;
-    } = {
+  const buildPayload = (convId: string | null): {
+    question: string;
+    conversation_id: string | null;
+    document_id: string | null;
+  } => {
+    const cleanConvId =
+      convId &&
+      !convId.startsWith("temp-") &&
+      !convId.startsWith("local-") &&
+      !convId.startsWith("guest-")
+        ? convId.trim()
+        : null;
+
+    const cleanDocId =
+      documentId && typeof documentId === "string" && documentId.trim()
+        ? documentId.trim()
+        : null;
+
+    return {
       question: question.trim(),
-      conversation_id:
-        convId &&
-        !convId.startsWith("temp-") &&
-        !convId.startsWith("local-") &&
-        !convId.startsWith("guest-")
-          ? convId
-          : null,
+      conversation_id: cleanConvId,
+      document_id: cleanDocId,
     };
-
-    if (documentId && documentId.trim()) {
-      payload.document_id = documentId.trim();
-    }
-
-    return payload;
   };
 
   let payload = buildPayload(conversationId);
 
-  console.log("FINAL CHAT PAYLOAD (isGuest: " + isGuest + "):", JSON.stringify(payload, null, 2));
+  console.log("FINAL CHAT REQUEST", {
+    question: payload.question,
+    conversation_id: payload.conversation_id,
+    document_id: payload.document_id,
+  });
 
   // ==============================================================
   // BUILD HEADERS

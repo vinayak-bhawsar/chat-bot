@@ -10,12 +10,17 @@ import {
   ExternalLink,
   Eye,
   FileText,
+  FileCode,
+  FileSpreadsheet,
+  FileArchive,
   Image as ImageIcon,
   Loader2,
   Sparkles,
   User,
 } from "lucide-react";
 
+import { getFileDetails, cleanDisplayName } from "@/lib/fileTypes";
+import BrandLogo from "@/components/common/BrandLogo";
 import PdfViewerModal from "@/components/common/PdfViewerModal";
 import MarkdownMessage from "./MarkdownMessage";
 
@@ -36,6 +41,9 @@ import {
 import {
   getAccessToken,
   uploadDocument,
+  getDocuments,
+  extractDocumentId,
+  extractConversationId,
 } from "@/lib/api";
 
 import {
@@ -194,7 +202,7 @@ function ImageAttachmentPreview({
         </div>
         <div className="min-w-0 flex-1">
           <span className="block truncate text-xs font-semibold text-zinc-900 group-hover:text-zinc-700">
-            {attachment.filename || "Attached Image"}
+            {cleanDisplayName(attachment.filename, "Attached Image")}
           </span>
           <span className="flex items-center gap-1 text-[10px] text-zinc-400">
             <Eye className="h-3 w-3 text-zinc-400" />
@@ -207,33 +215,55 @@ function ImageAttachmentPreview({
 }
 
 // ================================================================
-// PDF Attachment Card Component
+// File / Document Attachment Card Component
 // ================================================================
 
-function PdfAttachmentCard({
+function FileAttachmentCard({
   attachment,
   onClick,
 }: {
   attachment: ChatAttachment;
   onClick: () => void;
 }) {
+  const details = getFileDetails(attachment.filename, attachment.file?.type);
+  const { category, label, colorClass, borderHover } = details;
+
+  const renderIcon = () => {
+    switch (category) {
+      case "code":
+        return <FileCode className="h-5 w-5" />;
+      case "excel":
+        return <FileSpreadsheet className="h-5 w-5" />;
+      case "archive":
+        return <FileArchive className="h-5 w-5" />;
+      case "text":
+      case "pdf":
+      case "word":
+      case "powerpoint":
+      default:
+        return <FileText className="h-5 w-5" />;
+    }
+  };
+
   return (
     <button
       type="button"
       onClick={onClick}
-      className="group flex items-center gap-3 rounded-2xl bg-white border border-zinc-200/90 px-4 py-3 text-left shadow-2xs hover:border-zinc-300 hover:bg-zinc-50 transition cursor-pointer max-w-[280px] sm:max-w-[340px]"
-      title="Click to view PDF"
+      className={`group flex items-center gap-3 rounded-2xl bg-white border border-zinc-200/90 px-4 py-3 text-left shadow-2xs ${borderHover} hover:bg-zinc-50 transition cursor-pointer max-w-[280px] sm:max-w-[340px]`}
+      title={`Click to view ${label}`}
     >
-      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-red-100 bg-red-50 text-red-600">
-        <FileText className="h-5 w-5" />
+      <div
+        className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border ${colorClass}`}
+      >
+        {renderIcon()}
       </div>
       <div className="min-w-0 flex-1 pr-1">
         <span className="block truncate text-xs font-semibold text-zinc-900 group-hover:text-zinc-700">
-          {attachment.filename || "Attached Document"}
+          {cleanDisplayName(attachment.filename, "Attached Document")}
         </span>
         <span className="flex items-center gap-1 text-[10px] text-zinc-400 mt-0.5">
           <Eye className="h-3 w-3 text-zinc-400 group-hover:text-zinc-600" />
-          <span>PDF Document • Open</span>
+          <span>{`${label} • Open`}</span>
         </span>
       </div>
     </button>
@@ -393,38 +423,32 @@ export default function MainContent({
         // The backend document ID MUST come from doc.id
         // --------------------------------------------------------
 
-        if (
-          typeof doc.id !==
-          "string" ||
-          !doc.id.trim()
-        ) {
+        const documentId = extractDocumentId(doc);
+
+        if (!documentId) {
           console.error(
-            "Document selected but ID is missing:",
+            "Document selected from Knowledge Base but ID is missing:",
             doc
           );
-
           return;
         }
 
-        const documentId =
-          doc.id.trim();
-
         const filename =
-          typeof doc.file_name ===
-            "string"
+          typeof doc.file_name === "string" && doc.file_name
             ? doc.file_name
-            : "";
+            : typeof doc.filename === "string" && doc.filename
+              ? doc.filename
+              : "Document";
 
         // --------------------------------------------------------
-        // Store document for current input
+        // Store document for current input (Global Knowledge Base)
         // --------------------------------------------------------
 
         setUploadedDocument({
-          file: null as any,
-
+          file: null,
           documentId,
-
           filename,
+          source: "knowledge_base",
         });
 
         // --------------------------------------------------------
@@ -432,10 +456,11 @@ export default function MainContent({
         // --------------------------------------------------------
 
         console.log(
-          "DOCUMENT STORED FOR CHAT:",
+          "DOCUMENT STORED FOR CHAT (KNOWLEDGE BASE):",
           {
             documentId,
             filename,
+            source: "knowledge_base",
           }
         );
       };
@@ -546,30 +571,26 @@ export default function MainContent({
         });
       }
 
-      const docId =
-        response?.data?.id ||
-        response?.data?.document_id ||
-        response?.document_id ||
-        response?.id ||
-        null;
+      console.log("FULL DOCUMENT UPLOAD RESPONSE:", response);
+
+      const docId = extractDocumentId(response);
+
+      console.log("EXTRACTED DOCUMENT ID:", docId);
 
       if (!docId) {
+        console.error("FULL DOCUMENT UPLOAD RESPONSE (MISSING ID):", response);
         throw new Error(
           "Document uploaded, but backend did not return document ID."
         );
       }
 
       const cleanDocId = String(docId).trim();
-      const uploadConvId =
-        response?.data?.conversation_id ||
-        response?.conversation_id ||
-        null;
+      const uploadConvId = extractConversationId(response);
 
       if (
         uploadConvId &&
         isAuthenticated &&
         activeConversation &&
-        activeConversation.id.startsWith("temp-") &&
         uploadConvId !== activeConversation.id
       ) {
         onReplaceConversationId?.(
@@ -586,13 +607,8 @@ export default function MainContent({
         file,
         documentId: cleanDocId,
         filename: file.name,
+        source: "conversation",
       });
-
-      if (typeof window !== "undefined") {
-        window.dispatchEvent(
-          new CustomEvent("documents:updated")
-        );
-      }
     } catch (err: any) {
       console.error("Document upload failed:", err);
       alert(
@@ -737,7 +753,7 @@ export default function MainContent({
           documentFile.name
         );
 
-        const conversationId =
+        const convId =
           conversation.messages.length > 0 &&
           !conversation.id.startsWith("temp-") &&
           !conversation.id.startsWith("local-") &&
@@ -749,7 +765,7 @@ export default function MainContent({
         try {
           response = await uploadDocument({
             file: documentFile,
-            conversation_id: conversationId,
+            conversation_id: convId,
           });
         } catch (initialUploadErr: any) {
           // Auto-retry once after 1.5s if 502/503/504 or network error (e.g. Render server cold-start)
@@ -757,7 +773,7 @@ export default function MainContent({
           await new Promise((res) => setTimeout(res, 1500));
           response = await uploadDocument({
             file: documentFile,
-            conversation_id: conversationId,
+            conversation_id: convId,
           });
         }
 
@@ -765,34 +781,26 @@ export default function MainContent({
         // Extract backend document ID
         // --------------------------------------------------------
 
-        documentId =
-          response?.data?.id ||
-          response?.data?.document_id ||
-          response?.document_id ||
-          response?.id ||
-          null;
+        console.log("FULL DOCUMENT UPLOAD RESPONSE:", response);
 
-        if (!documentId) {
+        const extractedDocId = extractDocumentId(response);
+
+        console.log("EXTRACTED DOCUMENT ID:", extractedDocId);
+
+        if (!extractedDocId) {
+          console.error("FULL DOCUMENT UPLOAD RESPONSE (MISSING ID):", response);
           throw new Error(
             "Document uploaded, but backend did not return document ID."
           );
         }
 
-        documentId =
-          String(
-            documentId
-          ).trim();
-
-        uploadConvId =
-          response?.data?.conversation_id ||
-          response?.conversation_id ||
-          null;
+        documentId = String(extractedDocId).trim();
+        uploadConvId = extractConversationId(response) || convId || null;
 
         if (
           uploadConvId &&
           isAuthenticated &&
-          conversation.id.startsWith("temp-") &&
-          uploadConvId !== conversation.id
+          conversation.id !== uploadConvId
         ) {
           onReplaceConversationId?.(
             conversation.id,
@@ -823,17 +831,9 @@ export default function MainContent({
 
           filename:
             documentFile.name,
+
+          source: "conversation",
         });
-
-        // --------------------------------------------------------
-        // Refresh document sidebar
-        // --------------------------------------------------------
-
-        window.dispatchEvent(
-          new CustomEvent(
-            "documents:updated"
-          )
-        );
       } catch (
       error: any
       ) {
@@ -887,8 +887,12 @@ export default function MainContent({
     // ============================================================
     // DOCUMENT RESOLUTION HIERARCHY
     //
-    // Ensures document_id is ALWAYS sent in the chat payload
-    // for all follow-up questions in a document conversation.
+    // Order:
+    // 1. Current uploaded/attached document (ChatInput)
+    // 2. Conversation's document_id
+    // 3. Last document attached in this conversation
+    // 4. Persisted conversation document ID
+    // 5. No document (null)
     // ============================================================
 
     const isCurrentAttachment = Boolean(
@@ -896,6 +900,14 @@ export default function MainContent({
         (uploadedDocument?.documentId &&
           uploadedDocument.documentId.trim())
     );
+
+    const currentAttachmentSource =
+      uploadedDocument?.source ||
+      (uploadedDocument?.file
+        ? "conversation"
+        : uploadedDocument?.documentId
+          ? "knowledge_base"
+          : undefined);
 
     const lastAttachedDoc = [
       ...conversation.messages,
@@ -922,24 +934,32 @@ export default function MainContent({
         ? localStorage.getItem(`conversation_doc_name_${conversation.id}`)
         : null) || null;
 
-    const selectedDocumentId =
-      (isCurrentAttachment && documentId && documentId.trim()) ||
-      conversation.document_id?.trim() ||
-      lastAttachedDoc?.documentId?.trim() ||
-      storedConvDocId ||
-      null;
+    let selectedDocumentId: string | null = null;
+    let selectedDocumentName: string | null = null;
+    let documentScope: "knowledge_base" | "conversation" | "none" = "none";
 
-    const selectedDocumentName =
-      (isCurrentAttachment && filename && filename.trim()) ||
-      conversation.document_name?.trim() ||
-      lastAttachedDoc?.filename?.trim() ||
-      storedConvDocName ||
-      null;
+    if (isCurrentAttachment && (documentId || uploadedDocument?.documentId)) {
+      selectedDocumentId = (documentId || uploadedDocument?.documentId || "").trim();
+      selectedDocumentName = (filename || uploadedDocument?.filename || "").trim() || null;
+      documentScope = currentAttachmentSource === "knowledge_base" ? "knowledge_base" : "conversation";
+    } else if (conversation.document_id?.trim()) {
+      selectedDocumentId = conversation.document_id.trim();
+      selectedDocumentName = conversation.document_name?.trim() || null;
+      documentScope = "conversation";
+    } else if (lastAttachedDoc?.documentId?.trim()) {
+      selectedDocumentId = lastAttachedDoc.documentId.trim();
+      selectedDocumentName = lastAttachedDoc.filename?.trim() || null;
+      documentScope = "conversation";
+    } else if (storedConvDocId) {
+      selectedDocumentId = storedConvDocId.trim();
+      selectedDocumentName = storedConvDocName ? storedConvDocName.trim() : null;
+      documentScope = "conversation";
+    }
 
     if (
       isAuthenticated &&
       selectedDocumentId &&
-      isCurrentAttachment &&
+      documentScope === "conversation" &&
       typeof window !== "undefined"
     ) {
       localStorage.setItem(
@@ -958,48 +978,7 @@ export default function MainContent({
     setUploadedDocument(null);
 
     // ============================================================
-    // DEBUG
-    // ============================================================
-
-    console.log(
-      "===================================="
-    );
-
-    console.log(
-      "FINAL DOCUMENT FOR CHAT:"
-    );
-
-    console.log(
-      "Document ID:",
-      selectedDocumentId
-    );
-
-    console.log(
-      "Document Name:",
-      selectedDocumentName
-    );
-
-    console.log(
-      "Is Direct Attachment:",
-      isCurrentAttachment
-    );
-
-    console.log(
-      "Question:",
-      question
-    );
-
-    console.log(
-      "Conversation ID:",
-      conversation.id
-    );
-
-    console.log(
-      "===================================="
-    );
-
-    // ============================================================
-    // USER MESSAGE - Only show attachment card if attached to THIS message
+    // EFFECTIVE QUESTION & CONVERSATION ID
     // ============================================================
 
     const isImage = Boolean(
@@ -1014,6 +993,34 @@ export default function MainContent({
         : isImage
           ? "Please analyze this image."
           : "Please summarize this document.";
+
+    let backendConversationId: string | null =
+      uploadConvId ||
+      (conversation.messages.length > 0 &&
+      !conversation.id.startsWith("temp-") &&
+      !conversation.id.startsWith("local-") &&
+      !conversation.id.startsWith("guest-")
+        ? conversation.id
+        : null);
+
+    // ============================================================
+    // IMPORTANT FRONTEND DEBUG LOGS
+    // ============================================================
+
+    console.log("CURRENT CONVERSATION ID:", conversation.id);
+    console.log("SELECTED DOCUMENT ID:", selectedDocumentId);
+    console.log("SELECTED DOCUMENT NAME:", selectedDocumentName);
+    console.log("DOCUMENT SCOPE:", documentScope);
+    console.log("FINAL CHAT REQUEST:", {
+      question: effectiveQuestion,
+      conversationId: backendConversationId,
+      documentId: selectedDocumentId,
+      scope: documentScope,
+    });
+
+    // ============================================================
+    // USER MESSAGE - Only show attachment card if attached to THIS message
+    // ============================================================
 
     const userMessage: any = {
       id:
@@ -1101,20 +1108,6 @@ export default function MainContent({
         assistantMessage,
       ]
     );
-
-    // ============================================================
-    // STREAM CHAT (SSE)
-    // ============================================================
-
-    let backendConversationId:
-      string | null =
-      uploadConvId ||
-      (conversation.messages.length > 0 &&
-      !conversation.id.startsWith("temp-") &&
-      !conversation.id.startsWith("local-") &&
-      !conversation.id.startsWith("guest-")
-        ? conversation.id
-        : null);
 
     // ============================================================
     // START STREAM
@@ -1516,20 +1509,23 @@ export default function MainContent({
                     className="flex justify-end items-end gap-2.5 my-3"
                   >
                     <div className="flex flex-col items-end gap-1.5 max-w-[85%] sm:max-w-[75%]">
-                      {/* Attached File Card (PDF or Image) */}
+                      {/* Attached File Card (Image or Document) */}
                       {message.attachment && (() => {
+                        const fileDetails = getFileDetails(
+                          message.attachment.filename,
+                          message.attachment.file?.type
+                        );
                         const isImageMsg =
                           message.attachment.type === "image" ||
-                          message.attachment.file?.type?.startsWith("image/") ||
-                          (message.attachment.filename &&
-                            /\.(png|jpe?g|webp)$/i.test(message.attachment.filename));
+                          fileDetails.category === "image";
 
                         const handleOpenPreview = () => {
                           setPreviewPdf({
                             isOpen: true,
-                            filename:
-                              message.attachment.filename ||
-                              (isImageMsg ? "image.png" : "document.pdf"),
+                            filename: cleanDisplayName(
+                              message.attachment.filename,
+                              isImageMsg ? "image.png" : "document.pdf"
+                            ),
                             documentId:
                               message.attachment.documentId || null,
                             file: message.attachment.file || null,
@@ -1547,7 +1543,7 @@ export default function MainContent({
                         }
 
                         return (
-                          <PdfAttachmentCard
+                          <FileAttachmentCard
                             attachment={message.attachment}
                             onClick={handleOpenPreview}
                           />
@@ -1569,8 +1565,8 @@ export default function MainContent({
                         }
 
                         return (
-                          <div className="rounded-2xl rounded-br-xs bg-zinc-900 text-zinc-50 px-4.5 py-3 shadow-xs">
-                            <div className="whitespace-pre-wrap leading-relaxed text-zinc-100 text-[14.5px]">
+                          <div className="rounded-2xl rounded-br-xs bg-[#eef9fb] border border-[#56C5D9]/35 text-zinc-900 px-4 py-2.5 shadow-2xs">
+                            <div className="whitespace-pre-wrap leading-relaxed text-zinc-900 text-[14.5px]">
                               {message.content}
                             </div>
                           </div>
@@ -1579,7 +1575,7 @@ export default function MainContent({
                     </div>
 
                     <div
-                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-zinc-800 text-zinc-200 shadow-2xs mb-0.5"
+                      className="flex h-7.5 w-7.5 shrink-0 items-center justify-center rounded-xl bg-gradient-to-tr from-[#56C5D9] to-[#2ba8be] text-white shadow-2xs mb-0.5"
                       title="You"
                     >
                       <User className="h-4 w-4" />
@@ -1594,10 +1590,10 @@ export default function MainContent({
                     className="flex justify-start items-start gap-3 my-4 w-full"
                   >
                     <div
-                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-tr from-violet-600 via-indigo-600 to-blue-500 text-white shadow-2xs mt-0.5"
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-white border border-zinc-200/90 shadow-2xs mt-0.5"
                       title="AI Assistant"
                     >
-                      <Sparkles className="h-4 w-4" />
+                      <BrandLogo className="h-5 w-5" />
                     </div>
 
                     <div className="min-w-0 flex-1">
@@ -1605,7 +1601,7 @@ export default function MainContent({
                         <span className="text-[13px] font-semibold text-zinc-900">
                           AI Assistant
                         </span>
-                        <span className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-100/80">
+                        <span className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded-md bg-[#56C5D9]/10 text-[#2ba8be] border border-[#56C5D9]/25">
                           Agent
                         </span>
                       </div>

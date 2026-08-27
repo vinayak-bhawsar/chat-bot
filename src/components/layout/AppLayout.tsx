@@ -1082,11 +1082,17 @@ function AppLayoutContent({
           ? updater(existingConv ? existingConv.messages : [])
           : updater;
 
+      const docFromMsgs = messages.find((m) => m.attachment?.documentId)?.attachment;
+      const docId = existingConv?.document_id || docFromMsgs?.documentId || null;
+      const docName = existingConv?.document_name || docFromMsgs?.filename || null;
+
       if (!exists) {
         return [
           {
             id: conversationId,
             title: "New Chat",
+            document_id: docId,
+            document_name: docName,
             messages,
           },
           ...previous,
@@ -1100,6 +1106,8 @@ function AppLayoutContent({
 
         return {
           ...conversation,
+          document_id: conversation.document_id || docId,
+          document_name: conversation.document_name || docName,
           messages,
         };
       });

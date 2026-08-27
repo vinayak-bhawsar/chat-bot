@@ -281,25 +281,24 @@ export default function DocumentsPage({
             await getDocuments(
               folderId,
               1,
-              100
+              100,
+              conversationId
             );
 
-          /*
-           * Backend response:
-           *
-           * {
-           *   success: true,
-           *   data: {
-           *     items: [...]
-           *   }
-           * }
-           */
-
-          const items =
-            response?.data?.items ??
+          const resAny = response as any;
+          const allItems: DocumentItem[] =
+            (Array.isArray(resAny?.data?.items) && resAny.data.items) ||
+            (Array.isArray(resAny?.items) && resAny.items) ||
+            (Array.isArray(resAny?.data) && resAny.data) ||
+            (Array.isArray(resAny) && resAny) ||
             [];
 
-          setDocuments(items);
+          // Knowledge Base stores only global documents (conversation_id === null/undefined)
+          const visibleItems = conversationId
+            ? allItems.filter((item) => item.is_folder || item.conversation_id === conversationId)
+            : allItems.filter((item) => item.is_folder || !item.conversation_id || item.conversation_id === "null" || item.conversation_id === "");
+
+          setDocuments(visibleItems);
         } catch (error) {
           console.error(
             "Failed to load documents:",
@@ -318,7 +317,7 @@ export default function DocumentsPage({
           setIsLoading(false);
         }
       },
-      [isAuthenticated]
+      [isAuthenticated, conversationId]
     );
 
   // ==============================================================
@@ -333,12 +332,38 @@ export default function DocumentsPage({
       return;
     }
 
-    loadDocuments(
-      currentFolderId
-    );
+    void loadDocuments(currentFolderId);
   }, [
+    currentFolderId,
     isAuthenticated,
     authLoading,
+    loadDocuments,
+  ]);
+
+  // ==============================================================
+  // Auto-reload on documents:updated event
+  // ==============================================================
+
+  useEffect(() => {
+    const handleDocumentsUpdated = () => {
+      if (isAuthenticated) {
+        void loadDocuments(currentFolderId);
+      }
+    };
+
+    window.addEventListener(
+      "documents:updated",
+      handleDocumentsUpdated
+    );
+
+    return () => {
+      window.removeEventListener(
+        "documents:updated",
+        handleDocumentsUpdated
+      );
+    };
+  }, [
+    isAuthenticated,
     currentFolderId,
     loadDocuments,
   ]);
@@ -362,15 +387,13 @@ export default function DocumentsPage({
       folder.file_name
     );
 
-    setBreadcrumbs(
-      (previous) => [
-        ...previous,
-        {
-          id: folder.id,
-          name: folder.file_name,
-        },
-      ]
-    );
+    setBreadcrumbs([
+      ...breadcrumbs,
+      {
+        id: folder.id,
+        name: folder.file_name,
+      },
+    ]);
   };
 
   // ==============================================================
@@ -490,7 +513,7 @@ export default function DocumentsPage({
        */
 
       for (const file of files) {
-        await uploadDocument({
+        const uploadedDoc = await uploadDocument({
           file,
 
           parent_id:
@@ -499,6 +522,30 @@ export default function DocumentsPage({
           conversation_id:
             conversationId,
         });
+
+        if (uploadedDoc && (uploadedDoc.id || (uploadedDoc as any).document_id)) {
+          const docId = uploadedDoc.id || (uploadedDoc as any).document_id;
+          setDocuments((prev) => {
+            const exists = prev.some((d) => d.id === docId);
+            if (exists) return prev;
+            return [
+              {
+                id: docId,
+                file_name: uploadedDoc.file_name || file.name,
+                user_id: uploadedDoc.user_id || "",
+                parent_id: currentFolderId,
+                is_folder: false,
+                mime_type: uploadedDoc.mime_type || file.type || "application/octet-stream",
+                size_bytes: uploadedDoc.size_bytes || file.size,
+                status: uploadedDoc.status || "ready",
+                conversation_id: uploadedDoc.conversation_id || null,
+                created_at: uploadedDoc.created_at || new Date().toISOString(),
+                updated_at: uploadedDoc.updated_at || new Date().toISOString(),
+              },
+              ...prev,
+            ];
+          });
+        }
       }
 
       /*
@@ -508,6 +555,16 @@ export default function DocumentsPage({
 
       await loadDocuments(
         currentFolderId
+      );
+
+      setTimeout(() => {
+        void loadDocuments(currentFolderId);
+      }, 1200);
+
+      window.dispatchEvent(
+        new CustomEvent(
+          "documents:updated"
+        )
       );
     } catch (error) {
       console.error(

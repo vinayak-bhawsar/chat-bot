@@ -105,9 +105,9 @@ export default function SidebarFooter({
           ======================================================== */}
       {isLoading ? null : isAuthenticated && user ? (
         !collapsed ? (
-          <div className="rounded-xl border border-zinc-200/80 bg-white p-2 shadow-2xs">
+          <div className="rounded-xl border border-zinc-200/80 bg-white p-2.5 shadow-2xs">
             <div className="flex items-center gap-2.5">
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-tr from-violet-600 to-indigo-600 text-white text-xs font-bold shadow-2xs">
+              <div className="flex h-8.5 w-8.5 shrink-0 items-center justify-center rounded-xl bg-gradient-to-tr from-[#56C5D9] to-[#2ba8be] text-white text-xs font-bold shadow-2xs">
                 {displayName.charAt(0).toUpperCase()}
               </div>
 
@@ -117,8 +117,8 @@ export default function SidebarFooter({
                 </p>
                 <div className="flex items-center gap-1.5 mt-0.5">
                   <span className="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
-                  <span className="text-[10px] text-zinc-500 font-medium truncate">
-                    {user.email || "Active User"}
+                  <span className="text-[10.5px] text-zinc-500 font-medium truncate">
+                    {user.email || "Active"}
                   </span>
                 </div>
               </div>
@@ -126,7 +126,7 @@ export default function SidebarFooter({
               <button
                 type="button"
                 onClick={handleSettings}
-                className={`flex h-7 w-7 items-center justify-center rounded-lg transition-colors ${
+                className={`flex h-7.5 w-7.5 items-center justify-center rounded-lg transition-colors ${
                   settingsOpen
                     ? "bg-zinc-200 text-zinc-900"
                     : "text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
@@ -142,7 +142,7 @@ export default function SidebarFooter({
             type="button"
             onClick={handleSettings}
             title={displayName}
-            className="flex h-9 w-9 mx-auto items-center justify-center rounded-xl bg-gradient-to-tr from-violet-600 to-indigo-600 text-white text-xs font-bold shadow-2xs hover:scale-105 transition-transform"
+            className="flex h-9 w-9 mx-auto items-center justify-center rounded-xl bg-gradient-to-tr from-[#56C5D9] to-[#2ba8be] text-white text-xs font-bold shadow-2xs hover:scale-105 transition-transform"
           >
             {displayName.charAt(0).toUpperCase()}
           </button>

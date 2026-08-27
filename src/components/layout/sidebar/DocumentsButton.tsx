@@ -21,7 +21,7 @@ export default function DocumentsButton({
       onClick={onClick}
       title={
         collapsed
-          ? "Documents"
+          ? "Knowledge Base"
           : undefined
       }
       className={`
@@ -60,7 +60,7 @@ export default function DocumentsButton({
             truncate
           "
         >
-          Documents
+          Knowledge Base
         </span>
       ) : null}
     </button>

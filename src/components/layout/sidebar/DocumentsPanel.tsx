@@ -15,6 +15,9 @@ import {
   Eye,
   File,
   FileText,
+  FileCode,
+  FileSpreadsheet,
+  FileArchive,
   Folder,
   FolderPlus,
   Image as ImageIcon,
@@ -34,10 +37,12 @@ import {
 
 import { ApiError } from "@/lib/api";
 import { getLocalizedErrorMessage } from "@/i18n";
+import { getFileDetails, cleanDisplayName } from "@/lib/fileTypes";
 
 import { DocumentItem } from "@/types/documents";
 
 import { useAuth } from "@/context/AuthContext";
+import SidebarFooter from "./SidebarFooter";
 
 interface DocumentsPanelProps {
   open: boolean;
@@ -79,7 +84,7 @@ export default function DocumentsPanel({
   ] = useState<FolderPath[]>([
     {
       id: null,
-      name: "Documents",
+      name: "Knowledge Base",
     },
   ]);
 
@@ -228,10 +233,22 @@ export default function DocumentsPanel({
               100
             );
 
-          setDocuments(
-            response?.data?.items ??
-            []
+          const resAny = response as any;
+          const allItems: DocumentItem[] =
+            (Array.isArray(resAny?.data?.items) && resAny.data.items) ||
+            (Array.isArray(resAny?.items) && resAny.items) ||
+            (Array.isArray(resAny?.data) && resAny.data) ||
+            (Array.isArray(resAny) && resAny) ||
+            [];
+
+          console.log("KNOWLEDGE BASE RAW ITEMS:", allItems);
+
+          // Only store/display global documents (conversation_id === null/undefined) and folders in Knowledge Base
+          const knowledgeBaseDocs = allItems.filter(
+            (item) => item.is_folder || !item.conversation_id || item.conversation_id === "null" || item.conversation_id === ""
           );
+
+          setDocuments(knowledgeBaseDocs);
         } catch (err) {
           console.error(
             "Failed to load documents:",
@@ -348,17 +365,48 @@ export default function DocumentsPanel({
       setError(null);
 
       for (const file of files) {
-        await uploadDocument({
+        const uploadedDoc = await uploadDocument({
           file,
 
           parent_id:
             currentFolderId,
         });
+
+        console.log("KNOWLEDGE BASE UPLOADED DOC:", uploadedDoc);
+
+        if (uploadedDoc && (uploadedDoc.id || (uploadedDoc as any).document_id)) {
+          const docId = uploadedDoc.id || (uploadedDoc as any).document_id;
+          setDocuments((prev) => {
+            const exists = prev.some((d) => d.id === docId);
+            if (exists) return prev;
+            return [
+              {
+                id: docId,
+                file_name: uploadedDoc.file_name || file.name,
+                user_id: uploadedDoc.user_id || "",
+                parent_id: currentFolderId,
+                is_folder: false,
+                mime_type: uploadedDoc.mime_type || file.type || "application/octet-stream",
+                size_bytes: uploadedDoc.size_bytes || file.size,
+                status: uploadedDoc.status || "ready",
+                conversation_id: uploadedDoc.conversation_id || null,
+                created_at: uploadedDoc.created_at || new Date().toISOString(),
+                updated_at: uploadedDoc.updated_at || new Date().toISOString(),
+              },
+              ...prev,
+            ];
+          });
+        }
       }
 
       await loadDocuments(
         currentFolderId
       );
+
+      // Delayed refresh to capture background server indexing
+      setTimeout(() => {
+        void loadDocuments(currentFolderId);
+      }, 1200);
 
       window.dispatchEvent(
         new CustomEvent(
@@ -848,43 +896,112 @@ export default function DocumentsPanel({
     <>
       <div className="flex h-full w-full flex-col bg-[#f7f7f8]">
         {/* ========================================================
-            HEADER
+            HEADER (Identical Structure to Main Sidebar Header)
             ======================================================== */}
 
-        <div className="flex h-[73px] shrink-0 items-center justify-between border-b border-zinc-200/80 px-3.5 bg-white/70 backdrop-blur-xs">
-          <div className="flex items-center gap-2.5">
+        <div className="shrink-0 border-b border-zinc-200/80 px-3 py-3.5 space-y-2.5 bg-[#f7f7f8]">
+          {/* TOP ROW: Back button + Title & RAG Badge + Close */}
+          <div className="flex items-center justify-between">
+            <div className="flex min-w-0 flex-1 items-center gap-2.5 overflow-hidden">
+              <button
+                type="button"
+                onClick={onClose}
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-zinc-200/90 bg-white text-zinc-700 hover:bg-zinc-100 hover:text-zinc-900 shadow-2xs transition-transform duration-200 hover:scale-105"
+                aria-label="Back to chats"
+                title="Back to chats"
+              >
+                <ArrowLeft className="h-4.5 w-4.5" />
+              </button>
+
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <h2 className="text-[15px] font-bold tracking-tight text-zinc-900 truncate">
+                    Knowledge Base
+                  </h2>
+                  <span className="rounded-md bg-[#56C5D9]/10 px-1.5 py-0.5 text-[10px] font-bold tracking-wider text-[#2ba8be] border border-[#56C5D9]/25 uppercase">
+                    RAG
+                  </span>
+                </div>
+                <p className="text-[11px] text-zinc-500 font-normal">
+                  Document Index & Search
+                </p>
+              </div>
+            </div>
+
             <button
               type="button"
               onClick={onClose}
-              className="flex h-8.5 w-8.5 items-center justify-center rounded-xl border border-zinc-200/90 bg-white text-zinc-700 hover:bg-zinc-100 hover:text-zinc-900 shadow-2xs transition-colors"
-              aria-label="Back to chats"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-zinc-500 hover:bg-zinc-200/60 hover:text-zinc-900 transition-colors"
+              aria-label="Close Knowledge Base"
+              title="Close Knowledge Base"
             >
-              <ArrowLeft className="h-4 w-4" />
+              <X className="h-4.5 w-4.5" />
             </button>
-
-            <div>
-              <div className="flex items-center gap-1.5">
-                <h2 className="text-sm font-bold text-zinc-900">
-                  Knowledge Base
-                </h2>
-                <span className="rounded-md bg-indigo-50 px-1.5 py-0.5 text-[9px] font-bold text-indigo-600 border border-indigo-100 uppercase">
-                  Docs
-                </span>
-              </div>
-              <p className="text-[11px] text-zinc-500 font-normal">
-                Files indexed for AI Assistant
-              </p>
-            </div>
           </div>
 
-          <button
-            type="button"
-            onClick={onClose}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-zinc-400 hover:bg-zinc-200/60 hover:text-zinc-700 transition-colors"
-            aria-label="Close documents"
-          >
-            <X className="h-4 w-4" />
-          </button>
+          {/* ACTION BUTTON 1: Upload File (Full-Width White Button matching New Chat) */}
+          <div>
+            <button
+              type="button"
+              disabled={uploading}
+              onClick={() => {
+                if (!isAuthenticated) {
+                  window.location.href = "/login";
+                  return;
+                }
+                fileInputRef.current?.click();
+              }}
+              className="group relative flex w-full items-center overflow-hidden rounded-xl font-medium transition-all duration-200 border border-zinc-200/90 bg-white text-zinc-900 shadow-2xs hover:bg-zinc-50 hover:border-zinc-300 active:scale-[0.98] gap-2.5 px-3 py-2.5 text-sm disabled:opacity-50"
+            >
+              <div className="flex h-6 w-6 items-center justify-center shrink-0 rounded-lg bg-[#56C5D9]/10 border border-[#56C5D9]/25 text-[#2ba8be] transition-transform duration-200 group-hover:scale-105">
+                {uploading ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Upload className="h-3.5 w-3.5 stroke-[2.5]" />
+                )}
+              </div>
+
+              <span className="flex-1 text-left text-[13px] font-semibold tracking-tight text-zinc-900">
+                Upload Document
+              </span>
+
+              <span className="flex items-center gap-0.5 rounded-md border border-zinc-200 bg-zinc-100/80 px-1.5 py-0.5 text-[10px] font-medium font-mono text-zinc-500 transition-colors group-hover:bg-zinc-200/60">
+                + File
+              </span>
+            </button>
+          </div>
+
+          {/* ACTION BUTTON 2: New Folder (Full-Width White Button matching Knowledge Base) */}
+          <div>
+            <button
+              type="button"
+              onClick={() => {
+                if (!isAuthenticated) {
+                  window.location.href = "/login";
+                  return;
+                }
+                setShowFolderModal(true);
+              }}
+              className="flex w-full items-center rounded-xl text-xs font-medium transition-all duration-150 border border-zinc-200/80 bg-white text-zinc-700 hover:bg-zinc-50 hover:text-zinc-900 hover:border-zinc-300 shadow-2xs gap-2.5 px-3 py-2 active:scale-[0.98]"
+            >
+              <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-amber-500/10 text-amber-600">
+                <FolderPlus className="h-3.5 w-3.5" />
+              </div>
+
+              <span className="flex-1 text-left font-medium text-zinc-800">
+                New Folder
+              </span>
+            </button>
+          </div>
+
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept=".pdf,application/pdf,image/*,.txt,.csv,.json,.md,.docx,.xlsx,.pptx"
+            className="hidden"
+            onChange={handleFileChange}
+          />
         </div>
 
         {/* ========================================================
@@ -898,16 +1015,13 @@ export default function DocumentsPanel({
           onDrop={handleDrop}
           className="relative flex min-h-0 flex-1 flex-col"
         >
-          {/* ======================================================
-              DRAG OVERLAY
-              ====================================================== */}
-
+          {/* DRAG OVERLAY */}
           {dragging && (
-            <div className="absolute inset-2 z-50 flex items-center justify-center rounded-2xl border-2 border-dashed border-indigo-500 bg-white/95 shadow-lg">
+            <div className="absolute inset-2 z-50 flex items-center justify-center rounded-2xl border-2 border-dashed border-[#56C5D9] bg-white/95 shadow-lg">
               <div className="text-center">
-                <Upload className="mx-auto h-8 w-8 text-indigo-600 animate-bounce" />
+                <Upload className="mx-auto h-8 w-8 text-[#2ba8be] animate-bounce" />
                 <p className="mt-2 text-sm font-bold text-zinc-900">
-                  Drop PDF files here
+                  Drop files here
                 </p>
                 <p className="mt-0.5 text-xs text-zinc-500">
                   Instantly upload & index into Knowledge Base
@@ -916,142 +1030,37 @@ export default function DocumentsPanel({
             </div>
           )}
 
-          {/* ======================================================
-              TOOLBAR ACTIONS
-              ====================================================== */}
+          {/* BREADCRUMB */}
+          <div className="flex items-center gap-1 overflow-x-auto border-b border-zinc-200/80 bg-zinc-50/50 px-3 py-1.5">
+            {folderPath.map((item, index) => (
+              <div key={item.id ?? "root"} className="flex shrink-0 items-center">
+                {index > 0 && (
+                  <ChevronRight className="mx-1 h-3 w-3 text-zinc-400" />
+                )}
 
-          <div className="flex items-center gap-2 border-b border-zinc-200/80 px-3 py-2.5 bg-zinc-50/50">
-            <button
-              type="button"
-              disabled={uploading}
-              onClick={() => {
-                if (!isAuthenticated) {
-                  window.location.href = "/login";
-                  return;
-                }
-                fileInputRef.current?.click();
-              }}
-              className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-zinc-900 px-3 py-2 text-xs font-semibold text-white hover:bg-zinc-800 shadow-xs transition-all disabled:opacity-50"
-            >
-              {uploading ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Upload className="h-3.5 w-3.5" />
-              )}
-              <span>Upload PDF</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                if (!isAuthenticated) {
-                  window.location.href = "/login";
-                  return;
-                }
-                setShowFolderModal(true);
-              }}
-              className="flex items-center justify-center gap-1.5 rounded-xl border border-zinc-200/90 bg-white px-3 py-2 text-xs font-medium text-zinc-700 hover:bg-zinc-50 hover:text-zinc-900 shadow-2xs transition-colors"
-            >
-              <FolderPlus className="h-3.5 w-3.5 text-zinc-500" />
-              <span>New Folder</span>
-            </button>
-
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              className="hidden"
-              onChange={handleFileChange}
-            />
-          </div>
-
-          {/* ======================================================
-              BREADCRUMB
-              ====================================================== */}
-
-          <div
-            className="
-              flex
-              items-center
-              gap-1
-              overflow-x-auto
-              border-b
-              border-zinc-200
-              px-3
-              py-2
-            "
-          >
-            {folderPath.map(
-              (
-                item,
-                index
-              ) => (
-                <div
-                  key={
-                    item.id ??
-                    "root"
-                  }
-                  className="flex shrink-0 items-center"
+                <button
+                  type="button"
+                  onClick={() => navigateToPath(index)}
+                  className={`max-w-[120px] truncate text-[11px] font-medium transition-colors ${
+                    index === folderPath.length - 1
+                      ? "text-zinc-900 font-semibold"
+                      : "text-zinc-500 hover:text-zinc-800"
+                  }`}
                 >
-                  {index > 0 && (
-                    <ChevronRight className="mx-1 h-3 w-3 text-zinc-400" />
-                  )}
-
-                  <button
-                    type="button"
-                    onClick={() =>
-                      navigateToPath(
-                        index
-                      )
-                    }
-                    className="
-                      max-w-[120px]
-                      truncate
-                      text-[11px]
-                      font-medium
-                      text-zinc-600
-                      hover:text-zinc-900
-                    "
-                  >
-                    {
-                      item.name
-                    }
-                  </button>
-                </div>
-              )
-            )}
+                  {item.name}
+                </button>
+              </div>
+            ))}
           </div>
 
-          {/* ======================================================
-              ERROR
-              ====================================================== */}
-
+          {/* ERROR ALERT */}
           {error && (
-            <div
-              className="
-                m-3
-                flex
-                items-start
-                gap-2
-                rounded-lg
-                bg-red-50
-                px-3
-                py-2
-                text-xs
-                text-red-600
-              "
-            >
-              <span className="flex-1">
-                {error}
-              </span>
-
+            <div className="m-2 flex items-start gap-2 rounded-xl bg-red-50 p-2.5 text-xs text-red-600 border border-red-100">
+              <span className="flex-1">{error}</span>
               <button
                 type="button"
-                onClick={() =>
-                  setError(
-                    null
-                  )
-                }
+                onClick={() => setError(null)}
+                className="text-red-400 hover:text-red-600"
               >
                 <X className="h-3.5 w-3.5" />
               </button>
@@ -1059,169 +1068,166 @@ export default function DocumentsPanel({
           )}
 
           {/* ======================================================
-              ITEMS
+              SECTION TITLE (Matches Recent Chats Header)
               ====================================================== */}
+          <div className="px-3 pt-3 pb-1.5 flex items-center justify-between">
+            <p className="text-[11px] font-bold uppercase tracking-wider text-zinc-400">
+              Knowledge Files
+            </p>
+            {isAuthenticated && documents.length > 0 && (
+              <span className="text-[10px] font-semibold text-zinc-400 bg-zinc-200/70 px-1.5 py-0.2 rounded-full">
+                {documents.length}
+              </span>
+            )}
+          </div>
 
-          <div
-            className="
-              min-h-0
-              flex-1
-              overflow-y-auto
-              p-2
-            "
-          >
+          {/* ======================================================
+              ITEMS LIST
+              ====================================================== */}
+          <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-3 space-y-1">
             {loading && (
-              <div
-                className="
-                  flex
-                  items-center
-                  justify-center
-                  gap-2
-                  py-10
-                  text-xs
-                  text-zinc-500
-                "
-              >
-                <Loader2 className="h-4 w-4 animate-spin" />
-
-                Loading...
+              <div className="flex items-center justify-center gap-2 py-10 text-xs text-zinc-500">
+                <Loader2 className="h-4 w-4 animate-spin text-[#2ba8be]" />
+                <span>Loading files...</span>
               </div>
             )}
 
+            {/* Unauthenticated / Guest Mode */}
             {!loading && !isAuthenticated && (
-              <div className="flex h-full min-h-[250px] flex-col items-center justify-center rounded-xl border-2 border-dashed border-zinc-200 p-6 text-center bg-white/50">
-                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600 border border-indigo-100">
-                  <FileText className="h-6 w-6" />
+              <div className="mx-1 my-2 rounded-xl border border-dashed border-zinc-200 bg-white/60 p-3 text-center shadow-2xs">
+                <div className="mx-auto mb-2 flex h-8 w-8 items-center justify-center rounded-lg bg-[#56C5D9]/10 text-[#2ba8be] border border-[#56C5D9]/25">
+                  <Folder className="h-4 w-4" />
                 </div>
-                <h3 className="mt-3 text-sm font-bold text-zinc-900">
-                  Sign in required
-                </h3>
-                <p className="mt-1 max-w-xs text-xs text-zinc-500 leading-relaxed">
-                  Knowledge Base storage and document indexing require an account. Sign in to upload and manage your files.
+                <p className="text-xs font-semibold text-zinc-800">
+                  Sign In Required
+                </p>
+                <p className="mt-1 text-[11px] text-zinc-500 leading-snug">
+                  Knowledge Base storage and document indexing require an account.
                 </p>
                 <button
                   type="button"
                   onClick={() => {
                     window.location.href = "/login";
                   }}
-                  className="mt-4 flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-2xs hover:bg-indigo-700 transition-colors"
+                  className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-xl bg-zinc-900 px-3 py-2 text-xs font-semibold text-white shadow-2xs hover:bg-zinc-800 transition-all active:scale-[0.98]"
                 >
-                  <LogIn className="h-4 w-4" />
-                  Sign In to Continue
+                  <LogIn className="h-3.5 w-3.5" />
+                  <span>Sign In to Continue</span>
                 </button>
               </div>
             )}
 
+            {/* Empty State */}
+            {!loading && isAuthenticated && documents.length === 0 && (
+              <div className="px-3 py-8 text-center text-xs text-zinc-400">
+                <Folder className="h-6 w-6 mx-auto text-zinc-300 mb-1.5 opacity-60" />
+                <p className="font-medium text-zinc-600">No files in this folder</p>
+                <p className="mt-0.5 text-[11px] text-zinc-400">
+                  Upload files or drag & drop here
+                </p>
+              </div>
+            )}
+
+            {/* Document / Folder Cards */}
             {!loading &&
-              isAuthenticated &&
-              documents.length ===
-              0 && (
-                <div
-                  className="
-                    flex
-                    h-full
-                    min-h-[250px]
-                    flex-col
-                    items-center
-                    justify-center
-                    rounded-xl
-                    border-2
-                    border-dashed
-                    border-zinc-200
-                    px-6
-                    text-center
-                  "
-                >
-                  <Folder className="h-10 w-10 text-zinc-300" />
+              documents.length > 0 &&
+              documents.map((item) => {
+                const isSelected =
+                  !item.is_folder && selectedDocumentId === item.id;
 
-                  <p className="mt-3 text-sm font-medium text-zinc-600">
-                    No documents
-                  </p>
-
-                  <p className="mt-1 text-xs text-zinc-400">
-                    Drag and drop files
-                    here
-                  </p>
-                </div>
-              )}
-
-            {!loading &&
-              documents.length >
-              0 && (
-                <div className="space-y-1.5">
-                  {documents.map((item) => {
-                    const isSelected =
-                      !item.is_folder && selectedDocumentId === item.id;
-
-                    return (
-                      <div
-                        key={item.id}
-                        className={`group flex items-center gap-2.5 rounded-xl border p-2.5 transition-all duration-150 ${
-                          isSelected
-                            ? "border-indigo-300 bg-white shadow-2xs"
-                            : "border-zinc-200/70 bg-white/70 hover:border-zinc-300 hover:bg-white shadow-2xs"
-                        }`}
-                      >
-                        {/* ICON */}
-                        <div
-                          className={`flex h-8.5 w-8.5 shrink-0 items-center justify-center rounded-lg ${
-                            item.is_folder
-                              ? "bg-amber-500/10 text-amber-600 border border-amber-200/60"
-                              : item.mime_type?.includes("pdf") || item.file_name.toLowerCase().endsWith(".pdf")
-                              ? "bg-red-500/10 text-red-600 border border-red-200/60"
-                              : "bg-blue-500/10 text-blue-600 border border-blue-200/60"
-                          }`}
-                        >
-                          {item.is_folder ? (
-                            <Folder className="h-4.5 w-4.5" />
-                          ) : item.mime_type?.includes("image") || /\.(png|jpe?g|webp)$/i.test(item.file_name) ? (
-                            <ImageIcon className="h-4.5 w-4.5" />
-                          ) : item.mime_type?.includes("pdf") || item.file_name.toLowerCase().endsWith(".pdf") ? (
-                            <FileText className="h-4.5 w-4.5" />
-                          ) : (
-                            <File className="h-4.5 w-4.5" />
-                          )}
-                        </div>
-
-                        {/* FILE / FOLDER INFO */}
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (item.is_folder) {
-                              openFolder(item);
-                              return;
-                            }
-                            selectDocument(item);
-                          }}
-                          className="min-w-0 flex-1 cursor-pointer text-left"
-                          title={
-                            item.is_folder
-                              ? "Open folder"
-                              : "Select document for chat"
+                return (
+                  <div key={item.id} className="group relative">
+                    <div
+                      className={`flex w-full items-center rounded-xl px-2.5 py-2 text-left text-xs transition-all duration-150 border ${
+                        isSelected
+                          ? "bg-white text-zinc-950 font-semibold border-zinc-200 shadow-2xs"
+                          : "border-transparent text-zinc-600 hover:bg-white hover:border-zinc-200/70 hover:text-zinc-900 hover:shadow-2xs"
+                      }`}
+                    >
+                      {/* ICON */}
+                      <div className="shrink-0 mr-2.5">
+                        {(() => {
+                          if (item.is_folder) {
+                            return (
+                              <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-amber-50 text-amber-600 border border-amber-200/60">
+                                <Folder className="h-3.5 w-3.5" />
+                              </div>
+                            );
                           }
-                        >
-                          <span className="block truncate text-xs font-semibold text-zinc-900">
-                            {item.file_name}
-                          </span>
-
-                          {!item.is_folder && (
-                            <div className="mt-0.5 flex items-center gap-1.5 text-[10px] text-zinc-400">
-                              <span>{formatSize(item.size_bytes)}</span>
-                              <span>•</span>
-                              <span
-                                className={
-                                  isSelected
-                                    ? "font-semibold text-indigo-600"
-                                    : "text-zinc-500"
-                                }
-                              >
-                                {isSelected ? "Active in Chat" : "Click to select"}
-                              </span>
+                          const details = getFileDetails(
+                            item.file_name,
+                            item.mime_type
+                          );
+                          const renderFileIcon = () => {
+                            switch (details.category) {
+                              case "image":
+                                return <ImageIcon className="h-3.5 w-3.5" />;
+                              case "code":
+                                return <FileCode className="h-3.5 w-3.5" />;
+                              case "excel":
+                                return (
+                                  <FileSpreadsheet className="h-3.5 w-3.5" />
+                                );
+                              case "archive":
+                                return <FileArchive className="h-3.5 w-3.5" />;
+                              case "text":
+                              case "pdf":
+                              case "word":
+                              case "powerpoint":
+                              default:
+                                return <FileText className="h-3.5 w-3.5" />;
+                            }
+                          };
+                          return (
+                            <div
+                              className={`flex h-7 w-7 items-center justify-center rounded-lg border ${details.colorClass}`}
+                            >
+                              {renderFileIcon()}
                             </div>
-                          )}
-                        </button>
+                          );
+                        })()}
+                      </div>
 
-                        {/* PREVIEW BUTTON */}
+                      {/* FILE / FOLDER INFO */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (item.is_folder) {
+                            openFolder(item);
+                            return;
+                          }
+                          selectDocument(item);
+                        }}
+                        className="min-w-0 flex-1 cursor-pointer text-left"
+                        title={
+                          item.is_folder
+                            ? "Open folder"
+                            : "Select document for chat"
+                        }
+                      >
+                        <span className="block truncate text-xs font-semibold text-zinc-900">
+                          {cleanDisplayName(item.file_name, item.is_folder ? "Folder" : "Document")}
+                        </span>
+
+                        {!item.is_folder && (
+                          <div className="mt-0.5 flex items-center gap-1.5 text-[10px] text-zinc-400">
+                            <span>{formatSize(item.size_bytes)}</span>
+                            <span>•</span>
+                            <span
+                              className={
+                                isSelected
+                                  ? "font-semibold text-[#2ba8be]"
+                                  : "text-zinc-500"
+                              }
+                            >
+                              {isSelected ? "Active in Chat" : "Ready"}
+                            </span>
+                          </div>
+                        )}
+                      </button>
+
+                      {/* ACTIONS: Preview & Delete (Revealed on Hover) */}
+                      <div className="flex items-center gap-0.5">
                         {!item.is_folder && (
                           <button
                             type="button"
@@ -1239,34 +1245,36 @@ export default function DocumentsPanel({
                                 );
                               }
                             }}
-                            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-zinc-400 opacity-0 transition-opacity hover:bg-zinc-100 hover:text-zinc-800 group-hover:opacity-100"
+                            className="flex h-6 w-6 items-center justify-center rounded-lg text-zinc-400 opacity-0 group-hover:opacity-100 hover:bg-zinc-100 hover:text-zinc-900 transition-all"
                             title="Preview Document"
                           >
-                            <Eye className="h-4 w-4" />
+                            <Eye className="h-3.5 w-3.5" />
                           </button>
                         )}
 
-                        {/* DELETE BUTTON */}
                         <button
                           type="button"
                           disabled={deletingId === item.id}
                           onClick={() => setDeleteTarget(item)}
-                          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-zinc-400 opacity-0 transition-opacity hover:bg-red-50 hover:text-red-600 group-hover:opacity-100 disabled:opacity-50"
+                          className="flex h-6 w-6 items-center justify-center rounded-lg text-zinc-400 opacity-0 group-hover:opacity-100 hover:bg-red-50 hover:text-red-600 transition-all disabled:opacity-50"
                           title="Delete item"
                         >
                           {deletingId === item.id ? (
                             <Loader2 className="h-3.5 w-3.5 animate-spin" />
                           ) : (
-                            <Trash2 className="h-4 w-4" />
+                            <Trash2 className="h-3.5 w-3.5" />
                           )}
                         </button>
                       </div>
-                    );
-                  })}
-                </div>
-              )}
+                    </div>
+                  </div>
+                );
+              })}
           </div>
         </div>
+
+        {/* FOOTER */}
+        <SidebarFooter collapsed={false} showText={true} />
       </div>
 
       {/* ==========================================================
