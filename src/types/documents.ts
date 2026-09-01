@@ -62,10 +62,24 @@ export interface CreateFolderRequest {
 // Upload document options
 // ================================================================
 
+export interface UploadDocumentProgress {
+  status?: string;
+  stage?: "uploading" | "extracting" | "chunking" | "indexing" | "completed" | "error";
+  message?: string;
+  chunks?: number;
+  total_chunks?: number;
+  current_chunk?: number;
+  progress?: number;
+  document_id?: string;
+  filename?: string;
+}
+
 export interface UploadDocumentOptions {
   file: File;
 
   parent_id?: string | null;
 
   conversation_id?: string | null;
+
+  onProgress?: (progress: UploadDocumentProgress) => void;
 }
