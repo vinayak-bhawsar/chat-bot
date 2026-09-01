@@ -5,6 +5,7 @@ import {
   clearTokens,
 } from "./api";
 import { getLocalizedErrorMessage, normalizeErrorCode } from "@/i18n";
+import { ChatSource } from "@/types/chat";
 
 const API_URL =
   process.env.NEXT_PUBLIC_API_URL ||
@@ -13,9 +14,125 @@ const API_URL =
 export interface ChatStreamHandlers {
   onConversation?: (conversationId: string, title?: string) => void;
   onMessage?: (content: string) => void;
+  onReasoning?: (reasoning: string) => void;
+  onActivity?: (step: string) => void;
+  onSources?: (sources: ChatSource[]) => void;
   onTitle?: (title: string) => void;
-  onDone?: (answer: string, conversationId: string, title?: string) => void;
+  onDone?: (
+    answer: string,
+    conversationId: string,
+    title?: string,
+    reasoning?: string,
+    sources?: ChatSource[]
+  ) => void;
   onError?: (message: string, conversationId?: string) => void;
+}
+
+/**
+ * Normalizes raw source items from SSE events, backend payloads, or metadata
+ * into a clean, typed ChatSource array.
+ */
+export function normalizeSources(rawSources: unknown): ChatSource[] {
+  if (!rawSources) return [];
+  const list = Array.isArray(rawSources)
+    ? rawSources
+    : typeof rawSources === "object"
+    ? Object.values(rawSources as Record<string, unknown>)
+    : [];
+
+  const results: ChatSource[] = [];
+
+  for (const item of list) {
+    if (!item || typeof item !== "object") continue;
+    const s = item as Record<string, any>;
+
+    const filename =
+      s.filename ||
+      s.file_name ||
+      s.document_name ||
+      s.doc_name ||
+      s.name ||
+      s.title ||
+      s.source ||
+      (typeof s.metadata?.filename === "string" ? s.metadata.filename : "") ||
+      (typeof s.metadata?.file_name === "string" ? s.metadata.file_name : "") ||
+      (typeof s.metadata?.source === "string" ? s.metadata.source : "");
+
+    const documentId =
+      s.document_id ||
+      s.documentId ||
+      s.doc_id ||
+      s.id ||
+      s.metadata?.document_id ||
+      s.metadata?.documentId ||
+      s.metadata?.doc_id ||
+      undefined;
+
+    const page =
+      s.page ??
+      s.page_number ??
+      s.pageNumber ??
+      s.metadata?.page ??
+      s.metadata?.page_number ??
+      s.metadata?.pageNumber ??
+      undefined;
+
+    const section =
+      s.section ??
+      s.section_name ??
+      s.heading ??
+      s.metadata?.section ??
+      s.metadata?.heading ??
+      undefined;
+
+    const chunkId =
+      s.chunk_id ??
+      s.chunkId ??
+      s.chunk ??
+      s.metadata?.chunk_id ??
+      undefined;
+
+    const citationNumber =
+      s.citation_number ??
+      s.citation ??
+      s.index ??
+      s.ref ??
+      undefined;
+
+    const snippet =
+      s.snippet ??
+      s.text ??
+      s.content ??
+      s.page_content ??
+      s.metadata?.text ??
+      undefined;
+
+    const url =
+      s.url ??
+      s.file_url ??
+      s.download_url ??
+      s.metadata?.url ??
+      undefined;
+
+    if (filename || documentId || url) {
+      results.push({
+        id: s.id || (chunkId ? `chunk-${chunkId}` : undefined),
+        documentId: documentId ? String(documentId) : undefined,
+        filename: filename ? String(filename) : undefined,
+        title: s.title ? String(s.title) : undefined,
+        page: page !== undefined && page !== null ? page : undefined,
+        pageNumber: page !== undefined && page !== null ? page : undefined,
+        section: section ? String(section) : undefined,
+        chunkId: chunkId !== undefined ? chunkId : undefined,
+        sourceType: s.source_type || s.type || undefined,
+        citationNumber: citationNumber !== undefined ? citationNumber : undefined,
+        snippet: snippet ? String(snippet) : undefined,
+        url: url ? String(url) : undefined,
+      });
+    }
+  }
+
+  return results;
 }
 
 export async function streamChat(
@@ -43,7 +160,7 @@ export async function streamChat(
   // LOCAL GUEST CHAT (Offline / Preview Mode - No failing network call)
   // ==============================================================
   if (isGuest) {
-    await handleLocalGuestChat(question, handlers);
+    await handleLocalGuestChat(question, handlers, documentId, filename);
     return;
   }
 
@@ -155,7 +272,7 @@ export async function streamChat(
         headers: buildHeaders(accessToken),
         body: JSON.stringify(payload),
       });
-    } catch (retryNetworkErr) {
+    } catch {
       throw new Error(getLocalizedErrorMessage("NETWORK_ERROR"));
     }
   }
@@ -209,6 +326,7 @@ export async function streamChat(
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  const streamCtx: { inThinkTag?: boolean } = { inThinkTag: false };
 
   try {
     while (true) {
@@ -224,14 +342,14 @@ export async function streamChat(
       buffer = events.pop() || "";
 
       for (const event of events) {
-        processSSEEvent(event, handlers);
+        processSSEEvent(event, handlers, streamCtx);
       }
     }
 
     buffer += decoder.decode();
 
     if (buffer.trim()) {
-      processSSEEvent(buffer, handlers);
+      processSSEEvent(buffer, handlers, streamCtx);
     }
   } finally {
     reader.releaseLock();
@@ -244,7 +362,8 @@ export async function streamChat(
 
 function processSSEEvent(
   event: string,
-  handlers: ChatStreamHandlers
+  handlers: ChatStreamHandlers,
+  streamCtx?: { inThinkTag?: boolean }
 ): void {
   const lines = event.split(/\r?\n/);
   let eventType = "";
@@ -282,6 +401,9 @@ function processSSEEvent(
     eventType ||
     data?.event ||
     data?.type ||
+    (data?.sources || data?.source_documents || data?.citations ? "sources" : "") ||
+    (data?.activity || data?.step || data?.action ? "activity" : "") ||
+    (data?.reasoning || data?.thought || data?.reasoning_content || data?.reasoning_delta || data?.thinking ? "reasoning" : "") ||
     (data?.delta || data?.content || data?.text ? "delta" : "") ||
     (data?.answer ? "done" : "") ||
     (data?.title || data?.conversation_title ? "title" : "") ||
@@ -297,6 +419,64 @@ function processSSEEvent(
     handlers.onTitle?.(eventTitle.trim());
   }
 
+  // Check and extract sources in any event
+  const rawSources =
+    data?.sources ||
+    data?.source_documents ||
+    data?.citations ||
+    data?.references ||
+    data?.docs ||
+    data?.chunks ||
+    data?.retrieved_documents ||
+    data?.context_sources ||
+    (typeof data?.data === "object"
+      ? data?.data?.sources || data?.data?.source_documents || data?.data?.citations
+      : undefined);
+
+  if (rawSources) {
+    const parsedSources = normalizeSources(rawSources);
+    if (parsedSources.length > 0) {
+      handlers.onSources?.(parsedSources);
+    }
+  }
+
+  // Check and extract reasoning from any event payload
+  const rawReasoning =
+    data?.reasoning ??
+    data?.thought ??
+    data?.reasoning_content ??
+    data?.reasoning_delta ??
+    data?.thinking ??
+    data?.agent_thought ??
+    data?.agent_thoughts ??
+    (typeof data?.data === "object"
+      ? data?.data?.reasoning ?? data?.data?.thought ?? data?.data?.reasoning_content
+      : undefined);
+
+  if (rawReasoning && typeof rawReasoning === "string" && rawReasoning.trim()) {
+    handlers.onReasoning?.(rawReasoning);
+  }
+
+  // Activity / Step event
+  if (
+    inferredType === "activity" ||
+    inferredType === "step" ||
+    inferredType === "status" ||
+    data?.activity ||
+    data?.step ||
+    data?.action
+  ) {
+    const stepText =
+      data?.activity ||
+      data?.step ||
+      data?.action ||
+      data?.status ||
+      data?.message;
+    if (typeof stepText === "string" && stepText.trim()) {
+      handlers.onActivity?.(stepText.trim());
+    }
+  }
+
   // START
   if (inferredType === "start") {
     const conversationId = data?.conversation_id || data?.id;
@@ -306,11 +486,95 @@ function processSSEEvent(
     return;
   }
 
+  // SOURCES EVENT
+  if (inferredType === "sources" || inferredType === "source" || inferredType === "citations") {
+    if (rawSources) {
+      const parsedSources = normalizeSources(rawSources);
+      if (parsedSources.length > 0) {
+        handlers.onSources?.(parsedSources);
+      }
+    }
+    return;
+  }
+
+  // REASONING / THOUGHT / THINKING EVENT
+  if (
+    inferredType === "reasoning" ||
+    inferredType === "thought" ||
+    inferredType === "thinking" ||
+    inferredType === "reason" ||
+    eventType === "reasoning" ||
+    eventType === "thought" ||
+    eventType === "thinking"
+  ) {
+    const reasoningText =
+      rawReasoning ||
+      data?.delta ||
+      data?.content ||
+      data?.text ||
+      data?.message ||
+      data?.chunk ||
+      data?.data ||
+      (typeof data === "string" ? data : "");
+
+    if (reasoningText) {
+      if (typeof reasoningText === "string") {
+        handlers.onReasoning?.(reasoningText);
+      } else if (Array.isArray(reasoningText)) {
+        handlers.onReasoning?.(
+          reasoningText
+            .map((s) => (typeof s === "object" ? JSON.stringify(s) : String(s)))
+            .join("\n\n")
+        );
+      } else if (typeof reasoningText === "object") {
+        handlers.onReasoning?.(
+          reasoningText.content ||
+            reasoningText.text ||
+            reasoningText.message ||
+            JSON.stringify(reasoningText)
+        );
+      }
+    }
+    return;
+  }
+
   // DELTA
   if (inferredType === "delta") {
+    // If delta explicitly contains reasoning_content alongside standard delta
+    if (data?.reasoning_content || data?.reasoning_delta || data?.reasoning) {
+      const reasoningDelta =
+        data.reasoning_content || data.reasoning_delta || data.reasoning;
+      if (typeof reasoningDelta === "string" && reasoningDelta) {
+        handlers.onReasoning?.(reasoningDelta);
+      }
+    }
+
     const delta = data?.delta ?? data?.content ?? data?.text ?? "";
-    if (delta) {
-      handlers.onMessage?.(delta);
+    if (delta && typeof delta === "string") {
+      if (streamCtx?.inThinkTag) {
+        if (delta.includes("</think>")) {
+          const parts = delta.split("</think>");
+          if (parts[0]) handlers.onReasoning?.(parts[0]);
+          if (streamCtx) streamCtx.inThinkTag = false;
+          if (parts[1]) handlers.onMessage?.(parts[1]);
+        } else {
+          handlers.onReasoning?.(delta);
+        }
+      } else if (delta.includes("<think>")) {
+        const parts = delta.split("<think>");
+        if (parts[0]) handlers.onMessage?.(parts[0]);
+        const afterOpen = parts[1] || "";
+        if (afterOpen.includes("</think>")) {
+          const innerParts = afterOpen.split("</think>");
+          if (innerParts[0]) handlers.onReasoning?.(innerParts[0]);
+          if (innerParts[1]) handlers.onMessage?.(innerParts[1]);
+        } else {
+          if (streamCtx) streamCtx.inThinkTag = true;
+          if (afterOpen) handlers.onReasoning?.(afterOpen);
+        }
+      } else {
+        handlers.onMessage?.(delta);
+      }
     }
     return;
   }
@@ -328,7 +592,13 @@ function processSSEEvent(
     const answer =
       data?.answer ?? data?.text_content ?? data?.content ?? data?.text ?? "";
     const conversationId = data?.conversation_id || data?.id || "";
-    handlers.onDone?.(answer, conversationId, eventTitle?.trim());
+    const finalReasoning =
+      data?.reasoning ??
+      data?.thought ??
+      data?.reasoning_content ??
+      undefined;
+    const finalSources = rawSources ? normalizeSources(rawSources) : undefined;
+    handlers.onDone?.(answer, conversationId, eventTitle?.trim(), finalReasoning, finalSources);
     return;
   }
 
@@ -354,8 +624,23 @@ function processSSEEvent(
 
   // FALLBACKS
   if (data?.answer) {
-    handlers.onDone?.(data.answer, data.conversation_id || "", eventTitle?.trim());
+    const finalSources = rawSources ? normalizeSources(rawSources) : undefined;
+    handlers.onDone?.(
+      data.answer,
+      data.conversation_id || "",
+      eventTitle?.trim(),
+      data?.reasoning ?? data?.thought ?? data?.reasoning_content ?? undefined,
+      finalSources
+    );
     return;
+  }
+
+  if (data?.reasoning || data?.thought || data?.reasoning_content || data?.reasoning_delta) {
+    const rChunk = data.reasoning || data.thought || data.reasoning_content || data.reasoning_delta;
+    if (typeof rChunk === "string" && rChunk) {
+      handlers.onReasoning?.(rChunk);
+      return;
+    }
   }
 
   if (data?.delta || data?.content || data?.text) {
@@ -445,10 +730,22 @@ function generateGuestReply(question: string): string {
 
 async function handleLocalGuestChat(
   question: string,
-  handlers: ChatStreamHandlers
+  handlers: ChatStreamHandlers,
+  documentId: string | null = null,
+  filename: string | null = null
 ): Promise<void> {
   // Emit conversation ID for guest session
   handlers.onConversation?.("guest-session");
+
+  const localSources: ChatSource[] = [];
+  if (documentId || filename) {
+    localSources.push({
+      documentId: documentId || undefined,
+      filename: filename || "Document",
+      page: 1,
+    });
+    handlers.onSources?.(localSources);
+  }
 
   const guestReply = generateGuestReply(question);
 
@@ -460,5 +757,11 @@ async function handleLocalGuestChat(
     handlers.onMessage?.(chunks[i]);
   }
 
-  handlers.onDone?.(guestReply, "guest-session");
+  handlers.onDone?.(
+    guestReply,
+    "guest-session",
+    undefined,
+    undefined,
+    localSources.length > 0 ? localSources : undefined
+  );
 }

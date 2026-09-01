@@ -23,6 +23,7 @@ import { getFileDetails, cleanDisplayName } from "@/lib/fileTypes";
 import BrandLogo from "@/components/common/BrandLogo";
 import PdfViewerModal from "@/components/common/PdfViewerModal";
 import MarkdownMessage from "./MarkdownMessage";
+import ReasoningAccordion from "./ReasoningAccordion";
 
 import WelcomeScreen from "./WelcomeScreen";
 import ChatInput, {
@@ -31,6 +32,8 @@ import ChatInput, {
 
 import {
   ChatAttachment,
+  ChatMessage,
+  ChatSource,
   Conversation,
 } from "@/types/chat";
 
@@ -1015,16 +1018,30 @@ export default function MainContent({
     // ASSISTANT MESSAGE
     // ============================================================
 
-    const assistantMessage: any =
-    {
-      id:
-        crypto.randomUUID(),
+    const initialSources: ChatSource[] = [];
+    const targetDocId =
+      selectedDocumentId ||
+      conversation.document_id ||
+      userMessage.attachment?.documentId;
+    const targetDocName =
+      selectedDocumentName ||
+      conversation.document_name ||
+      userMessage.attachment?.filename;
 
-      role:
-        "assistant" as const,
+    if (targetDocId || targetDocName) {
+      initialSources.push({
+        documentId: targetDocId || undefined,
+        filename: targetDocName || "Document",
+        page: 1,
+      });
+    }
 
-      content:
-        "",
+    const assistantMessage: any = {
+      id: crypto.randomUUID(),
+      role: "assistant" as const,
+      content: "",
+      reasoning: "",
+      sources: initialSources.length > 0 ? initialSources : undefined,
     };
 
     // ============================================================
@@ -1137,6 +1154,101 @@ export default function MainContent({
           },
 
           // ======================================================
+          // SOURCES (ACTUAL RAG RETRIEVAL SOURCES)
+          // ======================================================
+
+          onSources: (newSources) => {
+            if (!newSources || newSources.length === 0) {
+              return;
+            }
+
+            const targetId =
+              backendConversationId ??
+              conversation.id;
+
+            onUpdateConversation(
+              targetId,
+              (messages) =>
+                messages.map((msg) => {
+                  if (msg.id !== assistantMessage.id) {
+                    return msg;
+                  }
+
+                  const existing = msg.sources || [];
+                  return {
+                    ...msg,
+                    sources: [...existing, ...newSources],
+                  };
+                })
+            );
+          },
+
+          // ======================================================
+          // ACTIVITY / STEP
+          // ======================================================
+
+          onActivity: (activityStep) => {
+            if (!activityStep) {
+              return;
+            }
+
+            const targetId =
+              backendConversationId ??
+              conversation.id;
+
+            onUpdateConversation(
+              targetId,
+              (messages) =>
+                messages.map((msg) => {
+                  if (msg.id !== assistantMessage.id) {
+                    return msg;
+                  }
+
+                  const existing = msg.reasoningSteps || [];
+                  if (existing.includes(activityStep)) {
+                    return msg;
+                  }
+
+                  return {
+                    ...msg,
+                    reasoningSteps: [...existing, activityStep].slice(0, 4),
+                  };
+                })
+            );
+          },
+
+          // ======================================================
+          // REASONING / THOUGHT
+          // ======================================================
+
+          onReasoning: (
+            reasoningContent
+          ) => {
+            if (!reasoningContent) {
+              return;
+            }
+
+            const targetId =
+              backendConversationId ??
+              conversation.id;
+
+            onUpdateConversation(
+              targetId,
+              (messages) =>
+                messages.map((msg) => {
+                  if (msg.id !== assistantMessage.id) {
+                    return msg;
+                  }
+
+                  return {
+                    ...msg,
+                    reasoning: (msg.reasoning || "") + reasoningContent,
+                  };
+                })
+            );
+          },
+
+          // ======================================================
           // DELTA
           // ======================================================
 
@@ -1187,7 +1299,9 @@ export default function MainContent({
           onDone: (
             answer,
             conversationId,
-            serverTitle
+            serverTitle,
+            finalReasoning,
+            finalSources
           ) => {
             if (
               conversationId
@@ -1268,34 +1382,46 @@ export default function MainContent({
               }
             );
 
-            if (answer) {
-              onUpdateConversation(
-                targetId,
+            onUpdateConversation(
+              targetId,
 
-                (
-                  messages
-                ) =>
-                  messages.map(
-                    (
-                      msg
-                    ) => {
-                      if (
-                        msg.id !==
-                        assistantMessage.id
-                      ) {
-                        return msg;
-                      }
-
-                      return {
-                        ...msg,
-
-                        content:
-                          answer,
-                      };
+              (
+                messages
+              ) =>
+                messages.map(
+                  (
+                    msg
+                  ) => {
+                    if (
+                      msg.id !==
+                      assistantMessage.id
+                    ) {
+                      return msg;
                     }
-                  )
-              );
-            }
+
+                    const effectiveSources =
+                      finalSources && finalSources.length > 0
+                        ? finalSources
+                        : msg.sources && msg.sources.length > 0
+                        ? msg.sources
+                        : initialSources.length > 0
+                        ? initialSources
+                        : undefined;
+
+                    return {
+                      ...msg,
+
+                      content:
+                        answer || msg.content,
+
+                      reasoning:
+                        finalReasoning || msg.reasoning,
+
+                      sources: effectiveSources,
+                    };
+                  }
+                )
+            );
 
             // ----------------------------------------------------
             // Clear selected document
@@ -1522,12 +1648,18 @@ export default function MainContent({
                   </div>
                 </div>
               ) : (
-                activeConversation.messages.map((message: any) => {
+                activeConversation.messages.map((message: any, msgIdx: number) => {
                 const isUserMessage =
                   message.role === "user" ||
                   message.role === "human" ||
                   String(message.role || "").toLowerCase() === "user" ||
                   Boolean(message.attachment && !message.isAssistant);
+
+                const prevUserMsg = activeConversation.messages
+                  .slice(0, msgIdx)
+                  .reverse()
+                  .find((m: any) => m.role === "user" || m.role === "human");
+                const userPrompt = prevUserMsg?.content;
 
                 return isUserMessage ? (
                   /* ====================================================
@@ -1636,9 +1768,67 @@ export default function MainContent({
                       </div>
 
                       <div className="text-[15px] leading-relaxed text-zinc-900">
+                        <ReasoningAccordion
+                          reasoning={message.reasoning}
+                          sources={
+                            message.sources && message.sources.length > 0
+                              ? message.sources
+                              : activeConversation.document_name || activeConversation.document_id
+                              ? [
+                                  {
+                                    documentId: activeConversation.document_id || undefined,
+                                    filename: activeConversation.document_name || "Document",
+                                    page: 1,
+                                  },
+                                ]
+                              : (() => {
+                                  const att = activeConversation.messages.find(
+                                    (m: any) => m.attachment?.filename
+                                  )?.attachment;
+                                  if (att) {
+                                    return [
+                                      {
+                                        documentId: att.documentId || undefined,
+                                        filename: att.filename || "Document",
+                                        page: 1,
+                                      },
+                                    ];
+                                  }
+                                  return undefined;
+                                })()
+                          }
+                          reasoningSteps={message.reasoningSteps}
+                          isStreaming={isStreaming && !message.content}
+                          hasAnswer={Boolean(message.content && message.content.trim().length > 0)}
+                          durationSeconds={message.reasoningDurationSeconds}
+                          documentName={
+                            activeConversation.document_name ||
+                            uploadedDocument?.filename ||
+                            activeConversation.messages.find(
+                              (m: any) => m.attachment?.filename
+                            )?.attachment?.filename ||
+                            message.attachment?.filename
+                          }
+                          userPrompt={userPrompt}
+                          onSourceClick={(source) => {
+                            setPreviewPdf({
+                              isOpen: true,
+                              filename: cleanDisplayName(
+                                source.filename || "document.pdf",
+                                "document.pdf"
+                              ),
+                              documentId: source.documentId || null,
+                              file: null,
+                              url: source.url || null,
+                            });
+                          }}
+                        />
                         <MarkdownMessage
                           content={message.content}
-                          isStreaming={isStreaming && !message.content}
+                          isStreaming={
+                            isStreaming &&
+                            !message.content
+                          }
                         />
                       </div>
                     </div>
