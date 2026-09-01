@@ -9,6 +9,7 @@ import {
 
 import {
   ArrowUp,
+  CheckCircle2,
   Eye,
   FileText,
   FileCode,
@@ -34,6 +35,19 @@ export interface UploadedDocument {
   documentId?: string;
   filename: string;
   source?: "knowledge_base" | "conversation";
+  chunks?: number;
+  totalChunks?: number;
+  currentChunk?: number;
+  progress?: number;
+  statusMessage?: string;
+  isProcessing?: boolean;
+}
+
+function formatFileSize(bytes?: number): string {
+  if (!bytes || bytes <= 0) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 interface ChatInputProps {
@@ -354,63 +368,134 @@ export default function ChatInput({
             ATTACHMENT PREVIEW (Authenticated only)
         ====================================================== */}
 
+        {/* ======================================================
+            ATTACHMENT PREVIEW (ChatGPT Style Circular Progress)
+        ====================================================== */}
+
         {hasAttachment && displayFilename && (() => {
           const fileDetails = getFileDetails(
             displayFilename,
             selectedFile?.type || uploadedDocument?.file?.type
           );
 
-          const renderAttachmentIcon = () => {
-            if (isUploading) {
-              return <Loader2 className="h-4 w-4 animate-spin text-amber-600" />;
-            }
+          const isProcessing = Boolean(isUploading || uploadedDocument?.isProcessing);
+          const chunks = uploadedDocument?.chunks ?? uploadedDocument?.currentChunk;
+          const totalChunks = uploadedDocument?.totalChunks;
+          const progressPercent = Math.min(
+            Math.max(uploadedDocument?.progress ?? (isUploading ? 30 : 100), 10),
+            100
+          );
+
+          const renderFileTypeIcon = () => {
             switch (fileDetails.category) {
               case "image":
-                return <ImageIcon className="h-4 w-4" />;
+                return <ImageIcon className="h-4.5 w-4.5" />;
               case "code":
-                return <FileCode className="h-4 w-4" />;
+                return <FileCode className="h-4.5 w-4.5" />;
               case "excel":
-                return <FileSpreadsheet className="h-4 w-4" />;
+                return <FileSpreadsheet className="h-4.5 w-4.5" />;
               case "archive":
-                return <FileArchive className="h-4 w-4" />;
+                return <FileArchive className="h-4.5 w-4.5" />;
               case "text":
               case "pdf":
               case "word":
               case "powerpoint":
               default:
-                return <FileText className="h-4 w-4" />;
+                return <FileText className="h-4.5 w-4.5" />;
             }
           };
 
+          // Circle math: r=15, circumference = 2 * PI * 15 ≈ 94.25
+          const circumference = 94.25;
+          const strokeDashoffset = circumference - (progressPercent / 100) * circumference;
+
           return (
             <div
-              onClick={(e) => e.stopPropagation()}
-              className="mb-2 flex items-center justify-between rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-2"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (typeof window !== "undefined") {
+                  window.dispatchEvent(
+                    new CustomEvent("pdf:open", {
+                      detail: {
+                        filename: displayFilename,
+                        documentId: uploadedDocument?.documentId || null,
+                        file: uploadedDocument?.file || selectedFile || null,
+                      },
+                    })
+                  );
+                }
+              }}
+              className="group relative mb-2.5 flex items-center justify-between gap-3 rounded-2xl border border-zinc-200/90 bg-zinc-50/90 p-2 sm:px-3 sm:py-2 transition-all hover:bg-zinc-100/90 shadow-2xs cursor-pointer max-w-full sm:max-w-md"
+              title="Click to preview attached document"
             >
-              <div className="flex min-w-0 items-center gap-2.5">
-                <div
-                  className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border ${
-                    isUploading
-                      ? "border-amber-100 bg-amber-50 text-amber-600"
-                      : fileDetails.colorClass
-                  }`}
-                >
-                  {renderAttachmentIcon()}
+              <div className="flex min-w-0 items-center gap-3">
+                {/* ChatGPT-style Icon with Radial Progress Ring */}
+                <div className="relative flex h-10 w-10 shrink-0 items-center justify-center">
+                  {isProcessing ? (
+                    <>
+                      {/* SVG Circular Progress Track & Fill */}
+                      <svg className="absolute inset-0 h-10 w-10 -rotate-90" viewBox="0 0 36 36">
+                        <circle
+                          cx="18"
+                          cy="18"
+                          r="15"
+                          className="stroke-zinc-200 fill-none"
+                          strokeWidth="2.5"
+                        />
+                        <circle
+                          cx="18"
+                          cy="18"
+                          r="15"
+                          className="stroke-[#56C5D9] fill-none transition-all duration-300 ease-out"
+                          strokeWidth="2.5"
+                          strokeDasharray={circumference}
+                          strokeDashoffset={strokeDashoffset}
+                          strokeLinecap="round"
+                        />
+                      </svg>
+                      <div className="relative z-10 flex h-7 w-7 items-center justify-center rounded-lg bg-[#56C5D9]/10 text-[#0e879c]">
+                        {renderFileTypeIcon()}
+                      </div>
+                    </>
+                  ) : (
+                    <div
+                      className={`relative flex h-10 w-10 items-center justify-center rounded-xl border transition-all ${
+                        uploadedDocument?.documentId
+                          ? "border-emerald-200/80 bg-emerald-50 text-emerald-600"
+                          : fileDetails.colorClass
+                      }`}
+                    >
+                      {renderFileTypeIcon()}
+                      {uploadedDocument?.documentId && (
+                        <div className="absolute -bottom-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-600 text-white ring-2 ring-white">
+                          <CheckCircle2 className="h-3 w-3" />
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
 
+                {/* File Details & Live Status */}
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-medium text-zinc-800">
+                  <p className="truncate text-xs font-semibold text-zinc-900 group-hover:text-zinc-700">
                     {displayFilename}
                   </p>
 
-                  <p className="text-[11px] text-zinc-500">
-                    {isUploading
-                      ? `Uploading ${fileDetails.label.toLowerCase()}...`
-                      : isStreaming
-                        ? "Processing..."
-                        : uploadedDocument?.documentId
-                          ? `Stored in Knowledge Base • Ready to chat`
-                          : `${fileDetails.label} attached • Ready to send`}
+                  <p className="text-[11px] font-medium text-zinc-500 truncate mt-0.5">
+                    {isProcessing
+                      ? uploadedDocument?.statusMessage ||
+                        (chunks && totalChunks
+                          ? `Chunk ${chunks}/${totalChunks}...`
+                          : chunks
+                          ? `Chunk ${chunks}...`
+                          : `Processing...`)
+                      : chunks
+                      ? `${fileDetails.label.toUpperCase()} · ${chunks} chunks`
+                      : selectedFile?.size
+                      ? `${fileDetails.label.toUpperCase()} · ${formatFileSize(selectedFile.size)}`
+                      : uploadedDocument?.documentId
+                      ? `${fileDetails.label.toUpperCase()} · Ready`
+                      : `${fileDetails.label} attached`}
                   </p>
                 </div>
               </div>
@@ -419,7 +504,8 @@ export default function ChatInput({
               <div className="flex items-center gap-1">
                 <button
                   type="button"
-                  onClick={() => {
+                  onClick={(e) => {
+                    e.stopPropagation();
                     if (typeof window !== "undefined") {
                       window.dispatchEvent(
                         new CustomEvent("pdf:open", {
@@ -435,7 +521,7 @@ export default function ChatInput({
                       );
                     }
                   }}
-                  className="flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-zinc-600 transition hover:bg-zinc-200 hover:text-zinc-900"
+                  className="flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-zinc-600 transition hover:bg-zinc-200/80 hover:text-zinc-900 cursor-pointer"
                   title={`Open and preview ${fileDetails.label.toLowerCase()}`}
                 >
                   <Eye className="h-3.5 w-3.5" />
@@ -444,10 +530,13 @@ export default function ChatInput({
 
                 <button
                   type="button"
-                  onClick={handleRemoveFile}
-                  disabled={isUploading || isStreaming}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleRemoveFile();
+                  }}
+                  disabled={isUploading && !uploadedDocument?.documentId}
                   aria-label="Remove file"
-                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-zinc-500 transition hover:bg-zinc-200 hover:text-zinc-900 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-zinc-400 transition hover:bg-zinc-200 hover:text-zinc-800 disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
                 >
                   <X className="h-4 w-4" />
                 </button>

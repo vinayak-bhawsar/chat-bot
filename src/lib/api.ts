@@ -1145,12 +1145,26 @@ export function extractConversationId(response: any): string | null {
 // Upload Document
 // ================================================================
 
+export interface UploadDocumentProgress {
+  status?: string;
+  stage?: "uploading" | "extracting" | "chunking" | "indexing" | "completed" | "error";
+  message?: string;
+  chunks?: number;
+  total_chunks?: number;
+  current_chunk?: number;
+  progress?: number;
+  document_id?: string;
+  filename?: string;
+}
+
 export interface UploadDocumentOptions {
   file: File;
 
   parent_id?: string | null;
 
   conversation_id?: string | null;
+
+  onProgress?: (progress: UploadDocumentProgress) => void;
 }
 
 export interface DocumentResponse {
@@ -1199,6 +1213,11 @@ export async function uploadDocument(
       : options.conversation_id ??
       null;
 
+  const onProgress =
+    options instanceof File
+      ? undefined
+      : options.onProgress;
+
   if (!file) {
     throw new ApiError(
       "A document file is required.",
@@ -1206,6 +1225,15 @@ export async function uploadDocument(
       "BAD_REQUEST"
     );
   }
+
+  // Initial progress notification
+  onProgress?.({
+    status: "uploading",
+    stage: "uploading",
+    message: `Uploading ${file.name}...`,
+    progress: 15,
+    filename: file.name,
+  });
 
   // ==============================================================
   // Access Token
@@ -1369,68 +1397,167 @@ export async function uploadDocument(
   }
 
   // ==============================================================
-  // Parse Response
+  // Parse Response (Live SSE / Stream Support)
   // ==============================================================
-
-  const contentType =
-    response.headers.get(
-      "content-type"
-    );
 
   let data: any = null;
 
-  if (
-    contentType?.includes(
-      "application/json"
-    ) ||
-    contentType?.includes("text/json") ||
-    contentType?.includes("application/problem+json")
-  ) {
+  if (response.ok && response.body && typeof response.body.getReader === "function") {
     try {
-      data =
-        await response.json();
-    } catch {
-      data = null;
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let mergedObj: any = {};
+      let hasReadStream = false;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        hasReadStream = true;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          const cleanLine = line.trim();
+          if (!cleanLine) continue;
+
+          let jsonStr = cleanLine;
+          if (cleanLine.startsWith("data:")) {
+            jsonStr = cleanLine.slice(5).trim();
+          }
+
+          if (jsonStr && jsonStr !== "[DONE]") {
+            try {
+              const parsed = JSON.parse(jsonStr);
+              if (parsed && typeof parsed === "object") {
+                mergedObj = { ...mergedObj, ...parsed };
+                if (onProgress) {
+                  const chunks = parsed.chunks ?? parsed.current_chunk ?? parsed.chunk_count ?? parsed.processed_chunks;
+                  const totalChunks = parsed.total_chunks ?? parsed.total;
+                  const percent = parsed.progress ?? (chunks && totalChunks ? Math.min(Math.round((chunks / totalChunks) * 100), 98) : undefined);
+                  const msg =
+                    parsed.message ||
+                    parsed.step ||
+                    (chunks && totalChunks
+                      ? `Processing chunk ${chunks} of ${totalChunks}...`
+                      : parsed.status
+                      ? `Processing: ${parsed.status}`
+                      : "Processing chunks...");
+
+                  onProgress({
+                    status: parsed.status || "processing",
+                    stage: parsed.stage || (chunks ? "chunking" : "extracting"),
+                    message: msg,
+                    chunks: typeof chunks === "number" ? chunks : undefined,
+                    total_chunks: typeof totalChunks === "number" ? totalChunks : undefined,
+                    current_chunk: typeof chunks === "number" ? chunks : undefined,
+                    progress: percent,
+                    document_id: extractDocumentId(parsed) || undefined,
+                    filename: parsed.filename || parsed.file_name,
+                  });
+                }
+              }
+            } catch {
+              // Not JSON line
+            }
+          }
+        }
+      }
+
+      if (buffer.trim()) {
+        const cleanLine = buffer.trim();
+        let jsonStr = cleanLine.startsWith("data:") ? cleanLine.slice(5).trim() : cleanLine;
+        if (jsonStr && jsonStr !== "[DONE]") {
+          try {
+            const parsed = JSON.parse(jsonStr);
+            if (parsed && typeof parsed === "object") {
+              mergedObj = { ...mergedObj, ...parsed };
+            }
+          } catch {}
+        }
+      }
+
+      if (hasReadStream && Object.keys(mergedObj).length > 0) {
+        data = mergedObj;
+      }
+    } catch (streamErr) {
+      console.warn("Upload stream reader non-fatal issue, falling back:", streamErr);
     }
   }
 
   if (data === null) {
-    const text =
-      await response.text();
+    const contentType =
+      response.headers.get(
+        "content-type"
+      );
 
-    if (text) {
-      const trimmed = text.trim();
-      if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
-        try {
-          data = JSON.parse(trimmed);
-        } catch {
-          data = text;
-        }
-      } else if (trimmed.includes("data:")) {
-        // SSE formatted response: parse chunks and merge
-        const lines = trimmed.split("\n");
-        let mergedObj: any = null;
-        for (const line of lines) {
-          const cleanLine = line.trim();
-          if (cleanLine.startsWith("data:")) {
-            const jsonStr = cleanLine.slice(5).trim();
-            if (jsonStr && jsonStr !== "[DONE]") {
-              try {
-                const parsed = JSON.parse(jsonStr);
-                if (parsed && typeof parsed === "object") {
-                  mergedObj = { ...(mergedObj || {}), ...parsed };
-                }
-              } catch {}
+    if (
+      contentType?.includes(
+        "application/json"
+      ) ||
+      contentType?.includes("text/json") ||
+      contentType?.includes("application/problem+json")
+    ) {
+      try {
+        data =
+          await response.json();
+      } catch {
+        data = null;
+      }
+    }
+
+    if (data === null) {
+      const text =
+        await response.text();
+
+      if (text) {
+        const trimmed = text.trim();
+        if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+          try {
+            data = JSON.parse(trimmed);
+          } catch {
+            data = text;
+          }
+        } else if (trimmed.includes("data:")) {
+          const lines = trimmed.split("\n");
+          let mergedObj: any = null;
+          for (const line of lines) {
+            const cleanLine = line.trim();
+            if (cleanLine.startsWith("data:")) {
+              const jsonStr = cleanLine.slice(5).trim();
+              if (jsonStr && jsonStr !== "[DONE]") {
+                try {
+                  const parsed = JSON.parse(jsonStr);
+                  if (parsed && typeof parsed === "object") {
+                    mergedObj = { ...(mergedObj || {}), ...parsed };
+                  }
+                } catch {}
+              }
             }
           }
+          data = mergedObj || text;
+        } else {
+          data = text;
         }
-        data = mergedObj || text;
-      } else {
-        data = text;
       }
-    } else {
-      data = null;
     }
+  }
+
+  // Final progress notification
+  if (response.ok && data) {
+    const finalChunks = data.chunks ?? data.total_chunks ?? data.data?.chunks;
+    onProgress?.({
+      status: "completed",
+      stage: "completed",
+      message: finalChunks ? `${finalChunks} chunks processed • Ready` : "Ready to chat",
+      progress: 100,
+      chunks: typeof finalChunks === "number" ? finalChunks : undefined,
+      total_chunks: typeof finalChunks === "number" ? finalChunks : undefined,
+      document_id: extractDocumentId(data) || undefined,
+      filename: data.filename || data.file_name || file.name,
+    });
   }
 
   // ==============================================================

@@ -454,6 +454,9 @@ export default function MainContent({
       file,
       documentId: "",
       filename: file.name,
+      progress: 15,
+      statusMessage: "Uploading document...",
+      isProcessing: true,
     });
 
     try {
@@ -465,11 +468,42 @@ export default function MainContent({
           ? activeConversation.id
           : undefined;
 
+      const handleProgress = (p: any) => {
+        setUploadedDocument((prev) => {
+          if (!prev) return null;
+          const chunks = p.chunks ?? p.current_chunk;
+          const totalChunks = p.total_chunks;
+          const progressPercent =
+            p.progress ??
+            (chunks && totalChunks
+              ? Math.min(Math.round((chunks / totalChunks) * 100), 98)
+              : prev.progress ?? 45);
+
+          return {
+            ...prev,
+            documentId: p.document_id || prev.documentId,
+            chunks: typeof chunks === "number" ? chunks : prev.chunks,
+            totalChunks: typeof totalChunks === "number" ? totalChunks : prev.totalChunks,
+            currentChunk: typeof chunks === "number" ? chunks : prev.currentChunk,
+            progress: progressPercent,
+            statusMessage:
+              p.message ||
+              (chunks && totalChunks
+                ? `Processing chunk ${chunks} of ${totalChunks}...`
+                : chunks
+                ? `Processing chunk ${chunks}...`
+                : "Processing chunks..."),
+            isProcessing: p.status !== "completed" && p.status !== "ready",
+          };
+        });
+      };
+
       let response: any;
       try {
         response = await uploadDocument({
           file,
           conversation_id: convId,
+          onProgress: handleProgress,
         });
       } catch (firstErr) {
         console.warn(
@@ -480,6 +514,7 @@ export default function MainContent({
         response = await uploadDocument({
           file,
           conversation_id: convId,
+          onProgress: handleProgress,
         });
       }
 
@@ -498,6 +533,7 @@ export default function MainContent({
 
       const cleanDocId = String(docId).trim();
       const uploadConvId = extractConversationId(response);
+      const totalChunks = response?.chunks ?? response?.total_chunks ?? response?.data?.chunks;
 
       if (
         uploadConvId &&
@@ -520,6 +556,11 @@ export default function MainContent({
         documentId: cleanDocId,
         filename: file.name,
         source: "conversation",
+        chunks: typeof totalChunks === "number" ? totalChunks : undefined,
+        totalChunks: typeof totalChunks === "number" ? totalChunks : undefined,
+        progress: 100,
+        statusMessage: typeof totalChunks === "number" ? `${totalChunks} chunks processed • Ready to chat` : "Indexed • Ready to chat",
+        isProcessing: false,
       });
     } catch (err: any) {
       console.error("Document upload failed:", err);
@@ -691,11 +732,42 @@ export default function MainContent({
             ? conversation.id
             : undefined;
 
+        const handleProgress = (p: any) => {
+          setUploadedDocument((prev) => {
+            if (!prev) return null;
+            const chunks = p.chunks ?? p.current_chunk;
+            const totalChunks = p.total_chunks;
+            const progressPercent =
+              p.progress ??
+              (chunks && totalChunks
+                ? Math.min(Math.round((chunks / totalChunks) * 100), 98)
+                : prev.progress ?? 45);
+
+            return {
+              ...prev,
+              documentId: p.document_id || prev.documentId,
+              chunks: typeof chunks === "number" ? chunks : prev.chunks,
+              totalChunks: typeof totalChunks === "number" ? totalChunks : prev.totalChunks,
+              currentChunk: typeof chunks === "number" ? chunks : prev.currentChunk,
+              progress: progressPercent,
+              statusMessage:
+                p.message ||
+                (chunks && totalChunks
+                  ? `Processing chunk ${chunks} of ${totalChunks}...`
+                  : chunks
+                  ? `Processing chunk ${chunks}...`
+                  : "Processing chunks..."),
+              isProcessing: p.status !== "completed" && p.status !== "ready",
+            };
+          });
+        };
+
         let response: any;
         try {
           response = await uploadDocument({
             file: documentFile,
             conversation_id: convId,
+            onProgress: handleProgress,
           });
         } catch (initialUploadErr: any) {
           // Auto-retry once after 1.5s if 502/503/504 or network error (e.g. Render server cold-start)
@@ -704,6 +776,7 @@ export default function MainContent({
           response = await uploadDocument({
             file: documentFile,
             conversation_id: convId,
+            onProgress: handleProgress,
           });
         }
 
@@ -726,6 +799,7 @@ export default function MainContent({
 
         documentId = String(extractedDocId).trim();
         uploadConvId = extractConversationId(response) || convId || null;
+        const totalChunks = response?.chunks ?? response?.total_chunks ?? response?.data?.chunks;
 
         if (
           uploadConvId &&
@@ -763,6 +837,12 @@ export default function MainContent({
             documentFile.name,
 
           source: "conversation",
+
+          chunks: typeof totalChunks === "number" ? totalChunks : undefined,
+          totalChunks: typeof totalChunks === "number" ? totalChunks : undefined,
+          progress: 100,
+          statusMessage: typeof totalChunks === "number" ? `${totalChunks} chunks processed • Ready to chat` : "Indexed • Ready to chat",
+          isProcessing: false,
         });
       } catch (
       error: any
@@ -819,20 +899,22 @@ export default function MainContent({
     }
 
     // ============================================================
-    // DOCUMENT RESOLUTION HIERARCHY
+    // DOCUMENT RESOLUTION
     //
-    // Order:
-    // 1. Current uploaded/attached document (ChatInput)
-    // 2. Conversation's document_id
-    // 3. Last document attached in this conversation
-    // 4. Persisted conversation document ID
-    // 5. No document (null)
+    // ONLY attach documentId if user explicitly attached a document/image
+    // to THIS specific message input.
+    //
+    // For subsequent questions without an attachment, document_id is NULL
+    // so the backend can search Global Knowledge Base (document_id = NULL)
+    // and any conversation documents without being restricted to a single file.
     // ============================================================
 
     const isCurrentAttachment = Boolean(
       uploadedDocument?.file ||
         (uploadedDocument?.documentId &&
-          uploadedDocument.documentId.trim())
+          uploadedDocument.documentId.trim()) ||
+        documentId ||
+        documentFile
     );
 
     const currentAttachmentSource =
@@ -843,69 +925,14 @@ export default function MainContent({
           ? "knowledge_base"
           : undefined);
 
-    const lastAttachedDoc = [
-      ...conversation.messages,
-    ]
-      .reverse()
-      .find(
-        (m) =>
-          m.attachment?.documentId
-      )?.attachment;
-
-    const storedConvDocId =
-      (isAuthenticated &&
-      typeof window !== "undefined" &&
-      conversation.id &&
-      !conversation.id.startsWith("temp-")
-        ? localStorage.getItem(`conversation_doc_${conversation.id}`)
-        : null) || null;
-
-    const storedConvDocName =
-      (isAuthenticated &&
-      typeof window !== "undefined" &&
-      conversation.id &&
-      !conversation.id.startsWith("temp-")
-        ? localStorage.getItem(`conversation_doc_name_${conversation.id}`)
-        : null) || null;
-
     let selectedDocumentId: string | null = null;
     let selectedDocumentName: string | null = null;
     let documentScope: "knowledge_base" | "conversation" | "none" = "none";
 
     if (isCurrentAttachment && (documentId || uploadedDocument?.documentId)) {
       selectedDocumentId = (documentId || uploadedDocument?.documentId || "").trim();
-      selectedDocumentName = (filename || uploadedDocument?.filename || "").trim() || null;
+      selectedDocumentName = (filename || uploadedDocument?.filename || documentFile?.name || "").trim() || null;
       documentScope = currentAttachmentSource === "knowledge_base" ? "knowledge_base" : "conversation";
-    } else if (conversation.document_id?.trim()) {
-      selectedDocumentId = conversation.document_id.trim();
-      selectedDocumentName = conversation.document_name?.trim() || null;
-      documentScope = "conversation";
-    } else if (lastAttachedDoc?.documentId?.trim()) {
-      selectedDocumentId = lastAttachedDoc.documentId.trim();
-      selectedDocumentName = lastAttachedDoc.filename?.trim() || null;
-      documentScope = "conversation";
-    } else if (storedConvDocId) {
-      selectedDocumentId = storedConvDocId.trim();
-      selectedDocumentName = storedConvDocName ? storedConvDocName.trim() : null;
-      documentScope = "conversation";
-    }
-
-    if (
-      isAuthenticated &&
-      selectedDocumentId &&
-      documentScope === "conversation" &&
-      typeof window !== "undefined"
-    ) {
-      localStorage.setItem(
-        `conversation_doc_${conversation.id}`,
-        selectedDocumentId
-      );
-      if (selectedDocumentName) {
-        localStorage.setItem(
-          `conversation_doc_name_${conversation.id}`,
-          selectedDocumentName
-        );
-      }
     }
 
     // Reset current input's uploaded document so next message is clean
@@ -968,14 +995,17 @@ export default function MainContent({
 
       attachment:
         isCurrentAttachment &&
-        (documentId || documentFile)
+        (documentId || documentFile || selectedDocumentId)
           ? {
               type: isImage ? "image" : "pdf",
 
               documentId:
-                documentId || "",
+                selectedDocumentId ||
+                documentId ||
+                "",
 
               filename:
+                selectedDocumentName ||
                 filename ||
                 documentFile?.name ||
                 (isImage ? "image.png" : "document.pdf"),
