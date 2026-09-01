@@ -1018,30 +1018,12 @@ export default function MainContent({
     // ASSISTANT MESSAGE
     // ============================================================
 
-    const initialSources: ChatSource[] = [];
-    const targetDocId =
-      selectedDocumentId ||
-      conversation.document_id ||
-      userMessage.attachment?.documentId;
-    const targetDocName =
-      selectedDocumentName ||
-      conversation.document_name ||
-      userMessage.attachment?.filename;
-
-    if (targetDocId || targetDocName) {
-      initialSources.push({
-        documentId: targetDocId || undefined,
-        filename: targetDocName || "Document",
-        page: 1,
-      });
-    }
-
     const assistantMessage: any = {
       id: crypto.randomUUID(),
       role: "assistant" as const,
       content: "",
       reasoning: "",
-      sources: initialSources.length > 0 ? initialSources : undefined,
+      sources: undefined,
     };
 
     // ============================================================
@@ -1404,8 +1386,6 @@ export default function MainContent({
                         ? finalSources
                         : msg.sources && msg.sources.length > 0
                         ? msg.sources
-                        : initialSources.length > 0
-                        ? initialSources
                         : undefined;
 
                     return {
@@ -1770,45 +1750,11 @@ export default function MainContent({
                       <div className="text-[15px] leading-relaxed text-zinc-900">
                         <ReasoningAccordion
                           reasoning={message.reasoning}
-                          sources={
-                            message.sources && message.sources.length > 0
-                              ? message.sources
-                              : activeConversation.document_name || activeConversation.document_id
-                              ? [
-                                  {
-                                    documentId: activeConversation.document_id || undefined,
-                                    filename: activeConversation.document_name || "Document",
-                                    page: 1,
-                                  },
-                                ]
-                              : (() => {
-                                  const att = activeConversation.messages.find(
-                                    (m: any) => m.attachment?.filename
-                                  )?.attachment;
-                                  if (att) {
-                                    return [
-                                      {
-                                        documentId: att.documentId || undefined,
-                                        filename: att.filename || "Document",
-                                        page: 1,
-                                      },
-                                    ];
-                                  }
-                                  return undefined;
-                                })()
-                          }
+                          sources={message.sources || []}
                           reasoningSteps={message.reasoningSteps}
                           isStreaming={Boolean(isStreaming && msgIdx === activeConversation.messages.length - 1)}
                           hasAnswer={Boolean(message.content && message.content.trim().length > 0)}
                           durationSeconds={message.reasoningDurationSeconds}
-                          documentName={
-                            activeConversation.document_name ||
-                            uploadedDocument?.filename ||
-                            activeConversation.messages.find(
-                              (m: any) => m.attachment?.filename
-                            )?.attachment?.filename ||
-                            message.attachment?.filename
-                          }
                           onSourceClick={(source) => {
                             setPreviewPdf({
                               isOpen: true,

@@ -737,16 +737,6 @@ async function handleLocalGuestChat(
   // Emit conversation ID for guest session
   handlers.onConversation?.("guest-session");
 
-  const localSources: ChatSource[] = [];
-  if (documentId || filename) {
-    localSources.push({
-      documentId: documentId || undefined,
-      filename: filename || "Document",
-      page: 1,
-    });
-    handlers.onSources?.(localSources);
-  }
-
   const guestReply = generateGuestReply(question);
 
   // Split response into natural streaming chunks (words + whitespace preserved)
@@ -762,6 +752,6 @@ async function handleLocalGuestChat(
     "guest-session",
     undefined,
     undefined,
-    localSources.length > 0 ? localSources : undefined
+    undefined
   );
 }

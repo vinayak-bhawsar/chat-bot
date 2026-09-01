@@ -322,7 +322,6 @@ interface ReasoningAccordionProps {
   isStreaming?: boolean;
   hasAnswer?: boolean;
   durationSeconds?: number;
-  documentName?: string;
   onSourceClick?: (source: ChatSource) => void;
 }
 
@@ -332,7 +331,6 @@ export default function ReasoningAccordion({
   reasoningSteps = [],
   isStreaming = false,
   hasAnswer = false,
-  documentName,
   onSourceClick,
 }: ReasoningAccordionProps) {
   const isThinkingActive = isStreaming && !hasAnswer;
@@ -342,20 +340,10 @@ export default function ReasoningAccordion({
   const [hasManuallyToggled, setHasManuallyToggled] = useState(false);
   const prevStreamingRef = React.useRef(isStreaming);
 
-  // Grouped sources (resolves from sources prop or document context)
-  const effectiveSources = useMemo(() => {
-    if (sources && sources.length > 0) {
-      return sources;
-    }
-    if (documentName) {
-      return [{ filename: documentName, page: 1 }];
-    }
-    return [];
-  }, [sources, documentName]);
-
+  // Grouped sources strictly from the actual sources returned for this message
   const groupedSources = useMemo(
-    () => groupSources(effectiveSources),
-    [effectiveSources]
+    () => groupSources(sources),
+    [sources]
   );
   const hasSources = groupedSources.length > 0;
 
