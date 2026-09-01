@@ -18,6 +18,7 @@ import MainContent from "@/components/chat/MainContent";
 
 import { Conversation } from "@/types/chat";
 import { apiRequest } from "@/lib/api";
+import { normalizeSources } from "@/lib/chat";
 import { useAuth } from "@/context/AuthContext";
 import {
   saveAttachmentMetadata,
@@ -1391,11 +1392,59 @@ function AppLayoutContent({
                 }
               : undefined;
 
+            let reasoning: string | undefined =
+              message.reasoning ||
+              message.thought ||
+              message.thoughts ||
+              message.thinking ||
+              message.reasoning_content ||
+              message.reason ||
+              message.explanation ||
+              message.agent_thought ||
+              message.agent_thoughts ||
+              message.metadata?.reasoning ||
+              message.metadata?.thought ||
+              message.metadata?.reasoning_content ||
+              undefined;
+
+            let content = getMessageContent(message);
+
+            if (!reasoning && content.includes("<think>") && content.includes("</think>")) {
+              const thinkMatch = content.match(/<think>([\s\S]*?)<\/think>/i);
+              if (thinkMatch) {
+                reasoning = thinkMatch[1].trim();
+                content = content.replace(/<think>[\s\S]*?<\/think>/i, "").trim();
+              }
+            }
+
+            const rawDuration =
+              message.reasoning_duration_seconds ??
+              message.reasoningDurationSeconds ??
+              message.metadata?.reasoning_duration_seconds ??
+              undefined;
+
+            const rawSources =
+              message.sources ??
+              message.source_documents ??
+              message.citations ??
+              message.references ??
+              message.docs ??
+              message.chunks ??
+              message.metadata?.sources ??
+              message.metadata?.source_documents ??
+              message.metadata?.citations ??
+              undefined;
+
+            const parsedSources = rawSources ? normalizeSources(rawSources) : undefined;
+
             return {
               id: getMessageId(message),
               role,
-              content: getMessageContent(message),
+              content,
               attachment,
+              reasoning: reasoning || undefined,
+              reasoningDurationSeconds: rawDuration ? Number(rawDuration) : undefined,
+              sources: parsedSources && parsedSources.length > 0 ? parsedSources : undefined,
             };
           }
         );

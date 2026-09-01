@@ -32,7 +32,10 @@ function sanitizeBackendIds(text: string): string {
   // 4. Remove bare UUIDs at line ends if they look like accidental backend dumps
   cleaned = cleaned.replace(/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/gm, "");
 
-  // 5. Clean up redundant empty lines
+  // 5. Remove think tags if present in answer stream
+  cleaned = cleaned.replace(/<think>[\s\S]*?<\/think>/gi, "");
+
+  // 6. Clean up redundant empty lines
   cleaned = cleaned.replace(/\n{3,}/g, "\n\n");
 
   return cleaned;
@@ -185,12 +188,7 @@ export default function MarkdownMessage({
   }, [content]);
 
   if (!formattedContent && isStreaming) {
-    return (
-      <div className="flex items-center gap-2 text-zinc-400">
-        <span className="inline-block h-2 w-2 rounded-full bg-zinc-400 animate-pulse" />
-        <span className="text-sm">Thinking...</span>
-      </div>
-    );
+    return null;
   }
 
   return (
