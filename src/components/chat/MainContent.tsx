@@ -1798,7 +1798,7 @@ export default function MainContent({
                                 })()
                           }
                           reasoningSteps={message.reasoningSteps}
-                          isStreaming={isStreaming && !message.content}
+                          isStreaming={Boolean(isStreaming && msgIdx === activeConversation.messages.length - 1)}
                           hasAnswer={Boolean(message.content && message.content.trim().length > 0)}
                           durationSeconds={message.reasoningDurationSeconds}
                           documentName={
@@ -1809,7 +1809,6 @@ export default function MainContent({
                             )?.attachment?.filename ||
                             message.attachment?.filename
                           }
-                          userPrompt={userPrompt}
                           onSourceClick={(source) => {
                             setPreviewPdf({
                               isOpen: true,
@@ -1825,10 +1824,11 @@ export default function MainContent({
                         />
                         <MarkdownMessage
                           content={message.content}
-                          isStreaming={
+                          isStreaming={Boolean(
                             isStreaming &&
+                            msgIdx === activeConversation.messages.length - 1 &&
                             !message.content
-                          }
+                          )}
                         />
                       </div>
                     </div>

@@ -154,15 +154,12 @@ function FormattedInlineText({ text }: { text: string }) {
 }
 
 /**
- * Strictly parses real reasoning emitted by backend (raw string, JSON, or step list),
- * or provides dynamic query-specific reasoning tailored to the user prompt and document.
+ * Strictly parses real reasoning emitted by backend (raw string, JSON, or step list).
+ * Returns empty array if no backend reasoning or steps are present.
  */
 export function parseReasoningSections(
   rawReasoning?: string,
-  reasoningSteps?: string[],
-  sources?: ChatSource[],
-  documentName?: string,
-  userPrompt?: string
+  reasoningSteps?: string[]
 ): ReasoningSection[] {
   // 1. Real raw reasoning string from backend (SSE reasoning, thought, or <think>)
   if (rawReasoning && rawReasoning.trim()) {
@@ -314,83 +311,7 @@ export function parseReasoningSections(
     }
   }
 
-  // 3. Dynamic contextual reasoning (when backend returns answer without internal thought field)
-  const cleanPrompt = (userPrompt || "").trim();
-  const isGreeting =
-    /^(hi|hello|hey|greetings|hola|namaste|good\s+(morning|afternoon|evening|day)|who\s+are\s+you|what\s+is\s+your\s+name)/i.test(
-      cleanPrompt
-    );
-  const isCodeOrTech =
-    /(code|function|python|javascript|typescript|react|html|css|sql|bug|algorithm|api)/i.test(
-      cleanPrompt
-    );
-  const hasDocContext = Boolean((sources && sources.length > 0) || documentName);
-
-  const docName =
-    (sources && sources[0]?.filename) || documentName || "knowledge base";
-  const docPage =
-    sources && sources[0]?.page ? `Page ${sources[0].page}` : undefined;
-
-  if (isGreeting || (!cleanPrompt && !hasDocContext)) {
-    return [
-      {
-        title: "Understanding your question",
-        content: `I'm analyzing the greeting and context to provide a warm, helpful, and welcoming assistant response.`,
-      },
-      {
-        title: "Preparing the response",
-        content: `Formulating a clear greeting to assist you with document analysis, search, or conversation.`,
-      },
-    ];
-  }
-
-  if (isCodeOrTech) {
-    return [
-      {
-        title: "Analyzing request details",
-        content: `I'm evaluating the technical requirements for "${cleanPrompt.slice(
-          0,
-          60
-        )}" to construct an optimized and correct solution.`,
-      },
-      {
-        title: "Formulating solution",
-        content: `Drafting structured code and explanations tailored to your technical question.`,
-      },
-    ];
-  }
-
-  if (hasDocContext) {
-    return [
-      {
-        title: "Searching knowledge base",
-        content: `I'm searching for information regarding "${cleanPrompt.slice(
-          0,
-          60
-        )}" in "${docName}"${
-          docPage ? ` (${docPage})` : ""
-        } using the \`search_kb\` tool.`,
-      },
-      {
-        title: "Finding relevant attributes",
-        content: `Analyzing the retrieved document sections to extract the key facts and answer your question accurately.`,
-      },
-    ];
-  }
-
-  return [
-    {
-      title: "Analyzing question details",
-      content: `I'm focusing on understanding the query "${cleanPrompt.slice(
-        0,
-        60
-      )}" and identifying relevant context.`,
-    },
-    {
-      title: "Generating response",
-      content: `Synthesizing the necessary information to formulate a comprehensive and accurate response.`,
-    },
-  ];
+  return [];
 }
 
 interface ReasoningAccordionProps {
@@ -402,7 +323,6 @@ interface ReasoningAccordionProps {
   hasAnswer?: boolean;
   durationSeconds?: number;
   documentName?: string;
-  userPrompt?: string;
   onSourceClick?: (source: ChatSource) => void;
 }
 
@@ -413,14 +333,14 @@ export default function ReasoningAccordion({
   isStreaming = false,
   hasAnswer = false,
   documentName,
-  userPrompt,
   onSourceClick,
 }: ReasoningAccordionProps) {
   const isThinkingActive = isStreaming && !hasAnswer;
 
-  // Toggle state (open while actively thinking or user expanded)
-  const [isOpen, setIsOpen] = useState(true);
+  // Open by default during active streaming, auto-closed by default once generation completes
+  const [isOpen, setIsOpen] = useState(isStreaming);
   const [hasManuallyToggled, setHasManuallyToggled] = useState(false);
+  const prevStreamingRef = React.useRef(isStreaming);
 
   // Grouped sources (resolves from sources prop or document context)
   const effectiveSources = useMemo(() => {
@@ -445,92 +365,86 @@ export default function ReasoningAccordion({
     (reasoningSteps && reasoningSteps.length > 0)
   );
 
-  // Parse structured sections from backend reasoning, backend steps, or dynamic query context
+  // Parse structured sections strictly from real backend reasoning or steps
   const sections = useMemo(() => {
-    // If actively streaming and backend reasoning has not arrived yet, do NOT generate fallback
-    if (isStreaming && !hasBackendReasoning) {
-      return [];
-    }
-
-    return parseReasoningSections(
-      reasoning,
-      reasoningSteps,
-      effectiveSources,
-      documentName,
-      userPrompt
-    );
-  }, [
-    isStreaming,
-    hasBackendReasoning,
-    reasoning,
-    reasoningSteps,
-    effectiveSources,
-    documentName,
-    userPrompt,
-  ]);
+    return parseReasoningSections(reasoning, reasoningSteps);
+  }, [reasoning, reasoningSteps]);
 
   const hasSections = sections.length > 0;
 
-  // Keep open during active thinking
+  // Lifecycle:
+  // 1. While streaming is active -> reasoning stays OPEN by default
+  // 2. When agent finishes printing the message (isStreaming: true -> false) -> auto-close by default
   useEffect(() => {
-    if (isThinkingActive && !hasManuallyToggled) {
-      setIsOpen(true);
+    if (isStreaming) {
+      if (!hasManuallyToggled) {
+        setIsOpen(true);
+      }
+    } else {
+      if (prevStreamingRef.current) {
+        setIsOpen(false);
+        setHasManuallyToggled(false);
+      }
     }
-  }, [isThinkingActive, hasManuallyToggled]);
+    prevStreamingRef.current = isStreaming;
+  }, [isStreaming, hasManuallyToggled]);
 
   const handleToggle = () => {
     setHasManuallyToggled(true);
     setIsOpen((prev) => !prev);
   };
 
-  // If actively streaming and backend reasoning has not arrived yet, ONLY show the placeholder
+  // If actively streaming and backend reasoning has not arrived yet, ONLY show pulsing "..."
   if (isStreaming && !hasBackendReasoning) {
     return (
-      <div className="my-3 pl-3.5 border-l-2 border-[#d8b4fe] transition-all duration-200">
-        <div className="flex items-center gap-2 text-left text-[13.5px] font-semibold text-[#8b5cf6]">
-          <Brain className="h-4 w-4 text-[#8b5cf6] animate-pulse shrink-0" />
-          <span>Thinking...</span>
-          <span className="flex h-1.5 w-1.5 shrink-0 rounded-full bg-[#8b5cf6] animate-ping" />
+      <div className="my-2.5 pl-3 border-l-2 border-[#56C5D9]/50 transition-all duration-200">
+        <div className="flex items-center gap-1.5 text-left text-[13px] font-medium text-[#0e879c]">
+          <Brain className="h-3.5 w-3.5 text-[#56C5D9] animate-pulse shrink-0" />
+          <span className="flex items-center gap-1 pl-0.5">
+            <span className="inline-block h-1.5 w-1.5 rounded-full bg-[#56C5D9] animate-bounce [animation-delay:-0.3s]" />
+            <span className="inline-block h-1.5 w-1.5 rounded-full bg-[#56C5D9] animate-bounce [animation-delay:-0.15s]" />
+            <span className="inline-block h-1.5 w-1.5 rounded-full bg-[#56C5D9] animate-bounce" />
+          </span>
         </div>
       </div>
     );
   }
 
-  // If not actively thinking and no sections, return null
+  // If no sections from backend and no sources, do NOT render anything
   if (!isThinkingActive && !hasSections && !hasSources) {
     return null;
   }
 
   return (
-    <div className="my-3 pl-3.5 border-l-2 border-[#d8b4fe] transition-all duration-200">
-      {/* Header Button (Brain Icon + Purple Text + Chevron) */}
+    <div className="my-2.5 pl-3 border-l-2 border-[#56C5D9]/60 transition-all duration-200">
+      {/* Header Button (Brain Icon + UI Theme Text + Chevron) */}
       <button
         type="button"
         onClick={handleToggle}
-        className="flex items-center gap-1.5 text-left text-[13.5px] font-semibold text-[#8b5cf6] hover:text-[#7c3aed] transition-colors focus:outline-none cursor-pointer select-none"
+        className="flex items-center gap-1.5 text-left text-[13px] font-semibold text-[#0e879c] hover:text-[#0b6d7e] transition-colors focus:outline-none cursor-pointer select-none"
         aria-expanded={isOpen}
       >
-        <Brain className="h-4 w-4 text-[#8b5cf6] shrink-0" />
+        <Brain className="h-4 w-4 text-[#56C5D9] shrink-0" />
 
         <span>{isOpen ? "Hide reasoning" : "Show reasoning"}</span>
 
         {isOpen ? (
-          <ChevronUp className="h-3.5 w-3.5 text-[#8b5cf6] shrink-0" />
+          <ChevronUp className="h-3.5 w-3.5 text-[#56C5D9] shrink-0" />
         ) : (
-          <ChevronDown className="h-3.5 w-3.5 text-[#8b5cf6] shrink-0" />
+          <ChevronDown className="h-3.5 w-3.5 text-[#56C5D9] shrink-0" />
         )}
 
         {isThinkingActive && (
-          <span className="ml-1 flex h-1.5 w-1.5 shrink-0 rounded-full bg-[#8b5cf6] animate-ping" />
+          <span className="ml-1 flex h-1.5 w-1.5 shrink-0 rounded-full bg-[#56C5D9] animate-ping" />
         )}
       </button>
 
-      {/* Expanded Reasoning Box (Matching exact image layout) */}
+      {/* Expanded Reasoning Box (Styled to match AI Chat Aqua Theme) */}
       {isOpen && (
-        <div className="mt-2.5 rounded-2xl bg-[#f8f9fe] p-4 sm:p-5 space-y-3.5 text-slate-700 shadow-2xs border border-purple-50/60">
+        <div className="mt-2.5 rounded-2xl bg-[#f0fbfd]/60 p-4 sm:p-5 space-y-3.5 text-slate-800 shadow-2xs border border-[#56C5D9]/25">
           {sections.map((section, idx) => (
             <div key={idx} className="space-y-1">
-              <h4 className="font-bold italic text-slate-800 text-[13.5px] tracking-tight">
+              <h4 className="font-bold italic text-slate-900 text-[13.5px] tracking-tight">
                 {section.title}
               </h4>
               <p className="italic text-slate-600 text-[13px] leading-relaxed font-normal">
@@ -539,11 +453,11 @@ export default function ReasoningAccordion({
             </div>
           ))}
 
-          {/* Prominent Sources & Data Used Section */}
+          {/* Sources & Data Used Section */}
           {hasSources && (
-            <div className="pt-3 border-t border-purple-100/70">
-              <div className="flex items-center gap-1.5 text-[11.5px] font-bold uppercase tracking-wider text-[#8b5cf6] mb-2.5">
-                <FileText className="h-3.5 w-3.5" />
+            <div className={`pt-3 ${hasSections ? "border-t border-[#56C5D9]/20" : ""}`}>
+              <div className="flex items-center gap-1.5 text-[11.5px] font-bold uppercase tracking-wider text-[#0e879c] mb-2.5">
+                <FileText className="h-3.5 w-3.5 text-[#56C5D9]" />
                 <span>Sources & Data Used ({groupedSources.length})</span>
               </div>
 
@@ -553,15 +467,15 @@ export default function ReasoningAccordion({
                     key={sIdx}
                     type="button"
                     onClick={() => onSourceClick?.(source.rawSource)}
-                    className="group flex items-center justify-between gap-2.5 rounded-xl border border-purple-200/90 bg-white px-3 py-2.5 text-left shadow-2xs hover:border-[#8b5cf6] hover:bg-purple-50/50 transition cursor-pointer"
+                    className="group flex items-center justify-between gap-2.5 rounded-xl border border-[#56C5D9]/30 bg-white px-3 py-2.5 text-left shadow-2xs hover:border-[#56C5D9] hover:bg-[#56C5D9]/5 transition cursor-pointer"
                     title={`View ${source.filename}`}
                   >
                     <div className="flex items-center gap-2.5 min-w-0">
-                      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-purple-50 text-[#8b5cf6] group-hover:bg-purple-100 transition-colors">
+                      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[#56C5D9]/10 text-[#0e879c] group-hover:bg-[#56C5D9]/20 transition-colors">
                         <FileText className="h-4 w-4" />
                       </div>
                       <div className="min-w-0">
-                        <span className="block truncate text-xs font-semibold text-slate-900 group-hover:text-[#7c3aed]">
+                        <span className="block truncate text-xs font-semibold text-slate-900 group-hover:text-[#0e879c]">
                           {cleanDisplayName(source.filename, "Document")}
                         </span>
                         <span className="block truncate text-[11px] font-medium text-slate-500">
@@ -569,7 +483,7 @@ export default function ReasoningAccordion({
                         </span>
                       </div>
                     </div>
-                    <ExternalLink className="h-3.5 w-3.5 shrink-0 text-slate-400 group-hover:text-[#8b5cf6] opacity-70 group-hover:opacity-100 transition-opacity" />
+                    <ExternalLink className="h-3.5 w-3.5 shrink-0 text-slate-400 group-hover:text-[#56C5D9] opacity-70 group-hover:opacity-100 transition-opacity" />
                   </button>
                 ))}
               </div>
