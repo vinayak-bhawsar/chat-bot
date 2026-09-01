@@ -11,9 +11,14 @@ import {
 import { createPortal } from "react-dom";
 
 import {
+  CheckCircle2,
   ChevronDown,
   ChevronRight,
+  Eye,
   File,
+  FileArchive,
+  FileCode,
+  FileSpreadsheet,
   FileText,
   Folder,
   FolderPlus,
@@ -23,7 +28,6 @@ import {
   Trash2,
   Upload,
   X,
-  Eye,
 } from "lucide-react";
 
 import {
@@ -37,7 +41,14 @@ import { ApiError } from "@/lib/api";
 import { getLocalizedErrorMessage } from "@/i18n";
 import { DocumentItem } from "@/types/documents";
 import { useAuth } from "@/context/AuthContext";
-import { cleanDisplayName } from "@/lib/fileTypes";
+import { getFileDetails, cleanDisplayName } from "@/lib/fileTypes";
+
+function formatFileSize(bytes?: number): string {
+  if (!bytes || bytes <= 0) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 // ================================================================
 // Props
@@ -55,6 +66,20 @@ interface DocumentsSectionProps {
 interface FolderPathItem {
   id: string | null;
   name: string;
+}
+
+interface UploadingItem {
+  id: string;
+  filename: string;
+  size: number;
+  progress: number;
+  chunks?: number;
+  totalChunks?: number;
+  statusMessage?: string;
+  status: "uploading" | "chunking" | "completed" | "error";
+  documentId?: string;
+  mimeType?: string;
+  file?: File | null;
 }
 
 // ================================================================
@@ -77,11 +102,11 @@ export default function DocumentsSection({
   }, []);
 
   // ==============================================================
-  // Documents open / closed
+  // Documents open / closed (Open by default on starting)
   // ==============================================================
 
   const [documentsOpen, setDocumentsOpen] =
-    useState(false);
+    useState(true);
 
   // ==============================================================
   // Current folder
@@ -108,6 +133,13 @@ export default function DocumentsSection({
 
   const [documents, setDocuments] =
     useState<DocumentItem[]>([]);
+
+  // ==============================================================
+  // Active uploading / chunking items
+  // ==============================================================
+
+  const [uploadingItems, setUploadingItems] =
+    useState<UploadingItem[]>([]);
 
   // ==============================================================
   // Loading
@@ -387,40 +419,123 @@ export default function DocumentsSection({
     }
 
     try {
+      setDocumentsOpen(true);
       setIsUploading(true);
       setErrorMessage(null);
 
-      // Upload each file into
-      // the currently opened folder.
+      // Upload each file into the currently opened folder.
       for (const file of files) {
-        const uploadedDoc = await uploadDocument({
-          file,
-          parent_id:
-            currentFolderId,
-        });
+        const tempId = `upload-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
-        if (uploadedDoc && (uploadedDoc.id || (uploadedDoc as any).document_id)) {
-          const docId = uploadedDoc.id || (uploadedDoc as any).document_id;
-          setDocuments((prev) => {
-            const exists = prev.some((d) => d.id === docId);
-            if (exists) return prev;
-            return [
-              {
-                id: docId,
-                file_name: uploadedDoc.file_name || file.name,
-                user_id: uploadedDoc.user_id || "",
-                parent_id: currentFolderId,
-                is_folder: false,
-                mime_type: uploadedDoc.mime_type || file.type || "application/octet-stream",
-                size_bytes: uploadedDoc.size_bytes || file.size,
-                status: uploadedDoc.status || "ready",
-                conversation_id: uploadedDoc.conversation_id || null,
-                created_at: uploadedDoc.created_at || new Date().toISOString(),
-                updated_at: uploadedDoc.updated_at || new Date().toISOString(),
-              },
-              ...prev,
-            ];
+        setUploadingItems((prev) => [
+          ...prev,
+          {
+            id: tempId,
+            filename: file.name,
+            size: file.size,
+            progress: 15,
+            statusMessage: "Uploading...",
+            status: "uploading",
+            mimeType: file.type,
+            file: file,
+          },
+        ]);
+
+        try {
+          const uploadedDoc = await uploadDocument({
+            file,
+            parent_id: currentFolderId,
+            onProgress: (p) => {
+              setUploadingItems((prev) =>
+                prev.map((item) => {
+                  if (item.id !== tempId) return item;
+                  const chunks = p.chunks ?? p.current_chunk;
+                  const totalChunks = p.total_chunks;
+                  const percent =
+                    p.progress ??
+                    (chunks && totalChunks
+                      ? Math.min(Math.round((chunks / totalChunks) * 100), 98)
+                      : item.progress ?? 45);
+
+                  return {
+                    ...item,
+                    progress: percent,
+                    chunks: typeof chunks === "number" ? chunks : item.chunks,
+                    totalChunks: typeof totalChunks === "number" ? totalChunks : item.totalChunks,
+                    statusMessage:
+                      p.message ||
+                      (chunks && totalChunks
+                        ? `Chunk ${chunks}/${totalChunks}...`
+                        : chunks
+                        ? `Chunk ${chunks}...`
+                        : "Processing chunks..."),
+                    status: p.status === "completed" ? "completed" : "chunking",
+                    documentId: p.document_id || item.documentId,
+                  };
+                })
+              );
+            },
           });
+
+          const totalChunks =
+            (uploadedDoc as any)?.chunks ??
+            (uploadedDoc as any)?.total_chunks ??
+            (uploadedDoc as any)?.data?.chunks;
+
+          setUploadingItems((prev) =>
+            prev.map((item) => {
+              if (item.id !== tempId) return item;
+              return {
+                ...item,
+                progress: 100,
+                status: "completed",
+                chunks: typeof totalChunks === "number" ? totalChunks : item.chunks,
+                statusMessage: typeof totalChunks === "number" ? `${totalChunks} chunks processed • Ready` : "Indexed • Ready",
+                documentId: (uploadedDoc as any)?.id || (uploadedDoc as any)?.document_id,
+              };
+            })
+          );
+
+          if (uploadedDoc && (uploadedDoc.id || (uploadedDoc as any).document_id)) {
+            const docId = uploadedDoc.id || (uploadedDoc as any).document_id;
+            setDocuments((prev) => {
+              const exists = prev.some((d) => d.id === docId);
+              if (exists) return prev;
+              return [
+                {
+                  id: docId,
+                  file_name: uploadedDoc.file_name || file.name,
+                  user_id: uploadedDoc.user_id || "",
+                  parent_id: currentFolderId,
+                  is_folder: false,
+                  mime_type: uploadedDoc.mime_type || file.type || "application/octet-stream",
+                  size_bytes: uploadedDoc.size_bytes || file.size,
+                  status: uploadedDoc.status || "ready",
+                  conversation_id: uploadedDoc.conversation_id || null,
+                  created_at: uploadedDoc.created_at || new Date().toISOString(),
+                  updated_at: uploadedDoc.updated_at || new Date().toISOString(),
+                },
+                ...prev,
+              ];
+            });
+          }
+
+          // Clean up completed uploading item after short delay
+          setTimeout(() => {
+            setUploadingItems((prev) => prev.filter((item) => item.id !== tempId));
+          }, 2000);
+        } catch (fileErr) {
+          console.error(`Failed to upload ${file.name}:`, fileErr);
+          setUploadingItems((prev) =>
+            prev.map((item) =>
+              item.id === tempId
+                ? { ...item, status: "error", statusMessage: "Upload failed" }
+                : item
+            )
+          );
+          setTimeout(() => {
+            setUploadingItems((prev) => prev.filter((item) => item.id !== tempId));
+          }, 3000);
         }
       }
 
@@ -1261,7 +1376,7 @@ export default function DocumentsSection({
                   Sign In
                 </button>
               </div>
-            ) : !isLoading && documents.length === 0 ? (
+            ) : !isLoading && documents.length === 0 && uploadingItems.length === 0 ? (
               <div
                 className="
                   px-3
@@ -1302,19 +1417,181 @@ export default function DocumentsSection({
             ) : null}
 
             {/* ==================================================
-                Files and folders
+                Files, folders and live chunk uploading items
                 ================================================== */}
 
-            {!isLoading &&
-              documents.length >
-              0 ? (
+            {!isLoading && (documents.length > 0 || uploadingItems.length > 0) ? (
               <div
                 className="
                   max-h-64
                   overflow-y-auto
                   p-1
+                  space-y-1
                 "
               >
+                {/* Active Uploading / Chunking Items (Exact same to same as ChatInput) */}
+                {uploadingItems.map((uItem) => {
+                  const fileDetails = getFileDetails(
+                    uItem.filename,
+                    uItem.mimeType
+                  );
+                  const isProcessing = uItem.status === "uploading" || uItem.status === "chunking";
+                  const isDone = uItem.status === "completed";
+                  const isErr = uItem.status === "error";
+                  const chunks = uItem.chunks;
+                  const totalChunks = uItem.totalChunks;
+                  const progressPercent = Math.min(Math.max(uItem.progress || 25, 10), 100);
+
+                  const renderFileTypeIcon = () => {
+                    switch (fileDetails.category) {
+                      case "image":
+                        return <ImageIcon className="h-4 w-4" />;
+                      case "code":
+                        return <FileCode className="h-4 w-4" />;
+                      case "excel":
+                        return <FileSpreadsheet className="h-4 w-4" />;
+                      case "archive":
+                        return <FileArchive className="h-4 w-4" />;
+                      case "text":
+                      case "pdf":
+                      case "word":
+                      case "powerpoint":
+                      default:
+                        return <FileText className="h-4 w-4" />;
+                    }
+                  };
+
+                  // Circle math: r=15, circumference = 2 * PI * 15 ≈ 94.25
+                  const circumference = 94.25;
+                  const strokeDashoffset = circumference - (progressPercent / 100) * circumference;
+
+                  return (
+                    <div
+                      key={uItem.id}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (typeof window !== "undefined") {
+                          window.dispatchEvent(
+                            new CustomEvent("pdf:open", {
+                              detail: {
+                                filename: uItem.filename,
+                                documentId: uItem.documentId || null,
+                                file: uItem.file || null,
+                              },
+                            })
+                          );
+                        }
+                      }}
+                      className="group relative mb-2 flex items-center justify-between gap-2.5 rounded-2xl border border-zinc-200/90 bg-zinc-50/90 p-2 sm:px-2.5 sm:py-2 transition-all hover:bg-zinc-100/90 shadow-2xs cursor-pointer max-w-full"
+                      title="Click to preview document"
+                    >
+                      <div className="flex min-w-0 items-center gap-2.5">
+                        {/* ChatGPT-style Icon with Radial Progress Ring */}
+                        <div className="relative flex h-9 w-9 shrink-0 items-center justify-center">
+                          {isProcessing ? (
+                            <>
+                              {/* SVG Circular Progress Track & Fill */}
+                              <svg className="absolute inset-0 h-9 w-9 -rotate-90" viewBox="0 0 36 36">
+                                <circle
+                                  cx="18"
+                                  cy="18"
+                                  r="15"
+                                  className="stroke-zinc-200 fill-none"
+                                  strokeWidth="2.5"
+                                />
+                                <circle
+                                  cx="18"
+                                  cy="18"
+                                  r="15"
+                                  className="stroke-[#56C5D9] fill-none transition-all duration-300 ease-out"
+                                  strokeWidth="2.5"
+                                  strokeDasharray={circumference}
+                                  strokeDashoffset={strokeDashoffset}
+                                  strokeLinecap="round"
+                                />
+                              </svg>
+                              <div className="relative z-10 flex h-6.5 w-6.5 items-center justify-center rounded-lg bg-[#56C5D9]/10 text-[#0e879c]">
+                                {renderFileTypeIcon()}
+                              </div>
+                            </>
+                          ) : isErr ? (
+                            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-rose-50 text-rose-600 border border-rose-200">
+                              <X className="h-4 w-4" />
+                            </div>
+                          ) : (
+                            <div
+                              className={`relative flex h-9 w-9 items-center justify-center rounded-xl border transition-all ${
+                                uItem.documentId
+                                  ? "border-emerald-200/80 bg-emerald-50 text-emerald-600"
+                                  : fileDetails.colorClass
+                              }`}
+                            >
+                              {renderFileTypeIcon()}
+                              {uItem.documentId && (
+                                <div className="absolute -bottom-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-600 text-white ring-2 ring-white">
+                                  <CheckCircle2 className="h-3 w-3" />
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* File Details & Live Status */}
+                        <div className="min-w-0">
+                          <p className="truncate text-xs font-semibold text-zinc-900 group-hover:text-zinc-700">
+                            {cleanDisplayName(uItem.filename, "Document")}
+                          </p>
+
+                          <p className="text-[11px] font-medium text-zinc-500 truncate mt-0.5">
+                            {isProcessing
+                              ? uItem.statusMessage ||
+                                (chunks && totalChunks
+                                  ? `Chunk ${chunks}/${totalChunks}...`
+                                  : chunks
+                                  ? `Chunk ${chunks}...`
+                                  : `Processing...`)
+                              : isErr
+                              ? "Failed to upload"
+                              : chunks
+                              ? `${fileDetails.label.toUpperCase()} · ${chunks} chunks`
+                              : uItem.size
+                              ? `${fileDetails.label.toUpperCase()} · ${formatFileSize(uItem.size)}`
+                              : uItem.documentId
+                              ? `${fileDetails.label.toUpperCase()} · Ready`
+                              : `${fileDetails.label} attached`}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Actions: Preview */}
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (typeof window !== "undefined") {
+                              window.dispatchEvent(
+                                new CustomEvent("pdf:open", {
+                                  detail: {
+                                    filename: uItem.filename,
+                                    documentId: uItem.documentId || null,
+                                    file: uItem.file || null,
+                                  },
+                                })
+                              );
+                            }
+                          }}
+                          className="flex items-center gap-1 rounded-md px-1.5 py-1 text-xs font-medium text-zinc-600 transition hover:bg-zinc-200/80 hover:text-zinc-900 cursor-pointer"
+                          title={`Open and preview ${fileDetails.label.toLowerCase()}`}
+                        >
+                          <Eye className="h-3.5 w-3.5" />
+                          <span className="hidden sm:inline text-[11px]">Preview</span>
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+
                 {documents.map(
                   (item) => (
                     <div
