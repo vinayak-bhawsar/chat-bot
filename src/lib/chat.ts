@@ -25,6 +25,11 @@ export interface ChatStreamHandlers {
     reasoning?: string,
     sources?: ChatSource[]
   ) => void;
+  onSuggestions?: (
+    suggestions: string[],
+    messageId?: string,
+    conversationId?: string
+  ) => void;
   onError?: (message: string, conversationId?: string) => void;
 }
 
@@ -133,6 +138,39 @@ export function normalizeSources(rawSources: unknown): ChatSource[] {
   }
 
   return results;
+}
+
+/**
+ * Normalizes raw suggestions from SSE events or backend payloads into a clean string array.
+ */
+export function normalizeSuggestions(rawSuggestions: unknown): string[] {
+  if (!rawSuggestions) return [];
+  const list = Array.isArray(rawSuggestions)
+    ? rawSuggestions
+    : typeof rawSuggestions === "string"
+    ? [rawSuggestions]
+    : typeof rawSuggestions === "object"
+    ? Object.values(rawSuggestions as Record<string, unknown>)
+    : [];
+
+  const results: string[] = [];
+  for (const item of list) {
+    if (typeof item === "string" && item.trim().length > 0) {
+      results.push(item.trim());
+    } else if (item && typeof item === "object") {
+      const text =
+        (item as any).text ||
+        (item as any).question ||
+        (item as any).title ||
+        (item as any).suggestion ||
+        (item as any).content;
+      if (typeof text === "string" && text.trim().length > 0) {
+        results.push(text.trim());
+      }
+    }
+  }
+
+  return results.slice(0, 3);
 }
 
 export async function streamChat(
@@ -401,6 +439,7 @@ function processSSEEvent(
     eventType ||
     data?.event ||
     data?.type ||
+    (data?.suggestions || data?.follow_up || data?.followup_questions ? "suggestions" : "") ||
     (data?.sources || data?.source_documents || data?.citations ? "sources" : "") ||
     (data?.activity || data?.step || data?.action ? "activity" : "") ||
     (data?.reasoning || data?.thought || data?.reasoning_content || data?.reasoning_delta || data?.thinking ? "reasoning" : "") ||
@@ -437,6 +476,31 @@ function processSSEEvent(
     const parsedSources = normalizeSources(rawSources);
     if (parsedSources.length > 0) {
       handlers.onSources?.(parsedSources);
+    }
+  }
+
+  // Check and extract suggestions from any event payload
+  const rawSuggestions =
+    data?.suggestions ||
+    data?.follow_up ||
+    data?.followup_questions ||
+    data?.suggested_questions ||
+    data?.related_questions ||
+    (typeof data?.data === "object"
+      ? data?.data?.suggestions || data?.data?.follow_up || data?.data?.followup_questions
+      : undefined);
+
+  if (rawSuggestions) {
+    const parsedSuggestions = normalizeSuggestions(rawSuggestions);
+    if (parsedSuggestions.length > 0) {
+      const messageId =
+        data?.message_id ||
+        data?.id ||
+        (typeof data?.data === "object" ? data?.data?.message_id : undefined);
+      const conversationId =
+        data?.conversation_id ||
+        (typeof data?.data === "object" ? data?.data?.conversation_id : undefined);
+      handlers.onSuggestions?.(parsedSuggestions, messageId, conversationId);
     }
   }
 
@@ -482,6 +546,29 @@ function processSSEEvent(
     const conversationId = data?.conversation_id || data?.id;
     if (conversationId) {
       handlers.onConversation?.(conversationId, eventTitle?.trim());
+    }
+    return;
+  }
+
+  // SUGGESTIONS EVENT
+  if (
+    inferredType === "suggestions" ||
+    inferredType === "suggestion" ||
+    eventType === "suggestions" ||
+    eventType === "suggestion"
+  ) {
+    if (rawSuggestions) {
+      const parsedSuggestions = normalizeSuggestions(rawSuggestions);
+      if (parsedSuggestions.length > 0) {
+        const messageId =
+          data?.message_id ||
+          data?.id ||
+          (typeof data?.data === "object" ? data?.data?.message_id : undefined);
+        const conversationId =
+          data?.conversation_id ||
+          (typeof data?.data === "object" ? data?.data?.conversation_id : undefined);
+        handlers.onSuggestions?.(parsedSuggestions, messageId, conversationId);
+      }
     }
     return;
   }

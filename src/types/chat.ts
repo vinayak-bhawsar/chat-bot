@@ -31,6 +31,7 @@ export interface ChatMessage {
   reasoningDurationSeconds?: number;
   sources?: ChatSource[];
   reasoningSteps?: string[];
+  suggestions?: string[];
 }
 
 export interface Conversation {

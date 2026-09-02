@@ -7,6 +7,7 @@ import {
 } from "react";
 
 import {
+  ArrowRight,
   ExternalLink,
   Eye,
   FileText,
@@ -1305,6 +1306,42 @@ export default function MainContent({
           },
 
           // ======================================================
+          // SUGGESTIONS
+          // ======================================================
+
+          onSuggestions: (
+            suggestionsList,
+            messageId
+          ) => {
+            if (!suggestionsList || suggestionsList.length === 0) {
+              return;
+            }
+
+            const targetId =
+              backendConversationId ??
+              conversation.id;
+
+            onUpdateConversation(
+              targetId,
+              (messages) =>
+                messages.map((msg) => {
+                  const isTarget = messageId
+                    ? msg.id === messageId || msg.id === assistantMessage.id
+                    : msg.id === assistantMessage.id;
+
+                  if (!isTarget) {
+                    return msg;
+                  }
+
+                  return {
+                    ...msg,
+                    suggestions: suggestionsList,
+                  };
+                })
+            );
+          },
+
+          // ======================================================
           // DONE
           // ======================================================
 
@@ -1806,6 +1843,44 @@ export default function MainContent({
                             !message.content
                           )}
                         />
+
+                        {/* ====================================================
+                            FOLLOW-UP SUGGESTIONS
+                            ==================================================== */}
+                        {message.suggestions && message.suggestions.length > 0 && (
+                          <div className="mt-4 flex flex-col gap-2 pt-1">
+                            <div className="flex items-center gap-1.5 text-[11.5px] font-semibold text-zinc-500">
+                              <Sparkles className="h-3.5 w-3.5 text-[#2ba8be]" />
+                              <span>Suggested follow-ups</span>
+                            </div>
+
+                            <div className="flex flex-col sm:flex-row sm:flex-wrap gap-2">
+                              {(message.suggestions as string[]).slice(0, 3).map((suggestion: string, sIdx: number) => {
+                                if (!suggestion || typeof suggestion !== "string" || !suggestion.trim()) {
+                                  return null;
+                                }
+
+                                const cleanSuggestion = suggestion.trim();
+
+                                return (
+                                  <button
+                                    key={`sug-${message.id}-${sIdx}`}
+                                    type="button"
+                                    disabled={isStreaming}
+                                    onClick={() => {
+                                      if (isStreaming) return;
+                                      handleSubmit(cleanSuggestion);
+                                    }}
+                                    className="group flex items-center justify-between gap-2.5 rounded-xl border border-zinc-200/90 bg-zinc-50/80 px-3.5 py-2 text-left text-xs font-medium text-zinc-700 transition-all duration-150 hover:border-[#56C5D9]/70 hover:bg-[#eef9fb]/80 hover:text-zinc-900 hover:shadow-2xs active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
+                                  >
+                                    <span className="leading-snug break-words">{cleanSuggestion}</span>
+                                    <ArrowRight className="h-3 w-3 shrink-0 text-zinc-400 opacity-0 transition-all duration-150 group-hover:opacity-100 group-hover:translate-x-0.5 group-hover:text-[#2ba8be]" />
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>
