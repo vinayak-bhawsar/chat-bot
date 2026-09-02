@@ -17,26 +17,23 @@ import {
 
 // ================================================================
 // GET DOCUMENTS
-// ================================================================
-
 export async function getDocuments(
   parentId: string | null = null,
   page: number = 1,
   pageSize: number = 100,
-  conversationId?: string | null
+  _conversationId?: string | null
 ): Promise<DocumentsResponse> {
   const params = new URLSearchParams();
 
-  if (parentId) {
-    params.append("parent_id", parentId);
-  }
+  const safePage = Math.max(1, page || 1);
+  const safePageSize = Math.min(Math.max(1, pageSize || 100), 100);
 
-  if (conversationId !== undefined && conversationId !== null) {
-    params.append("conversation_id", conversationId);
-  }
+  params.set("page", String(safePage));
+  params.set("page_size", String(safePageSize));
 
-  params.append("page", String(page));
-  params.append("page_size", String(pageSize));
+  if (parentId && typeof parentId === "string" && parentId.trim()) {
+    params.set("parent_id", parentId.trim());
+  }
 
   return apiRequest<DocumentsResponse>(
     `/documents?${params.toString()}`,

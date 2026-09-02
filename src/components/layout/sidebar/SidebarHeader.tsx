@@ -11,24 +11,24 @@ import BrandLogo from "@/components/common/BrandLogo";
 interface SidebarHeaderProps {
   collapsed: boolean;
   showText: boolean;
-
-  documentsOpen: boolean;
-
+  isKnowledgeBaseActive?: boolean;
+  documentsOpen?: boolean;
   onToggle: () => void;
-
   onNewChat: () => void;
-
   onDocumentsClick: () => void;
 }
 
 export default function SidebarHeader({
   collapsed,
   showText,
-  documentsOpen,
+  isKnowledgeBaseActive = false,
+  documentsOpen = false,
   onToggle,
   onNewChat,
   onDocumentsClick,
 }: SidebarHeaderProps) {
+  const isActive = isKnowledgeBaseActive || documentsOpen;
+
   // Global shortcut: Cmd+K / Ctrl+K or Cmd+N / Ctrl+N for New Chat
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -127,30 +127,40 @@ export default function SidebarHeader({
       </div>
 
       {/* ==========================================================
-          KNOWLEDGE BASE BUTTON (Clean White Button)
+          KNOWLEDGE BASE BUTTON (Clean Button with Active State)
           ========================================================== */}
       <div>
         <button
           type="button"
           onClick={onDocumentsClick}
-          aria-expanded={documentsOpen}
+          aria-expanded={isActive}
           title={collapsed ? "Knowledge Base" : undefined}
           className={`flex w-full items-center rounded-xl text-xs font-medium transition-all duration-150 border active:scale-[0.98] ${
             collapsed
               ? "justify-center h-9 w-9 mx-auto"
               : "gap-2.5 px-3 py-2"
           } ${
-            documentsOpen
-              ? "bg-zinc-100 text-zinc-900 border-zinc-300 shadow-2xs font-semibold"
+            isActive
+              ? "bg-amber-500/10 text-amber-900 border-amber-500/30 shadow-2xs font-semibold"
               : "border-zinc-200/80 bg-white text-zinc-700 hover:bg-zinc-50 hover:text-zinc-900 hover:border-zinc-300 shadow-2xs"
           }`}
         >
-          <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-amber-500/10 text-amber-600">
+          <div
+            className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md ${
+              isActive
+                ? "bg-amber-500/20 text-amber-700"
+                : "bg-amber-500/10 text-amber-600"
+            }`}
+          >
             <Folder className="h-3.5 w-3.5" />
           </div>
 
           {!collapsed && showText && (
-            <span className="flex-1 text-left font-medium text-zinc-800">
+            <span
+              className={`flex-1 text-left font-medium ${
+                isActive ? "text-amber-950 font-semibold" : "text-zinc-800"
+              }`}
+            >
               Knowledge Base
             </span>
           )}
