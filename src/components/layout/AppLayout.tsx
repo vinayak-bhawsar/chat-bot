@@ -18,7 +18,7 @@ import MainContent from "@/components/chat/MainContent";
 
 import { Conversation } from "@/types/chat";
 import { apiRequest } from "@/lib/api";
-import { normalizeSources } from "@/lib/chat";
+import { normalizeSources, normalizeSuggestions } from "@/lib/chat";
 import { useAuth } from "@/context/AuthContext";
 import {
   saveAttachmentMetadata,
@@ -1437,6 +1437,16 @@ function AppLayoutContent({
 
             const parsedSources = rawSources ? normalizeSources(rawSources) : undefined;
 
+            const rawSuggestions =
+              message.suggestions ??
+              message.follow_up ??
+              message.followup_questions ??
+              message.suggested_questions ??
+              message.metadata?.suggestions ??
+              undefined;
+
+            const parsedSuggestions = rawSuggestions ? normalizeSuggestions(rawSuggestions) : undefined;
+
             return {
               id: getMessageId(message),
               role,
@@ -1445,6 +1455,7 @@ function AppLayoutContent({
               reasoning: reasoning || undefined,
               reasoningDurationSeconds: rawDuration ? Number(rawDuration) : undefined,
               sources: parsedSources && parsedSources.length > 0 ? parsedSources : undefined,
+              suggestions: parsedSuggestions && parsedSuggestions.length > 0 ? parsedSuggestions : undefined,
             };
           }
         );
