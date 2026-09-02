@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import SidebarHeader from "./sidebar/SidebarHeader";
-import DocumentsPanel from "./sidebar/DocumentsPanel";
 import RecentChats from "./sidebar/RecentChats";
 import SidebarFooter from "./sidebar/SidebarFooter";
 import { Conversation } from "@/types/chat";
@@ -12,9 +11,11 @@ interface SidebarProps {
   onMobileClose: () => void;
   conversations: Conversation[];
   activeConversationId: string | null;
+  isKnowledgeBaseActive?: boolean;
   onNewChat: () => void;
   onSelectChat: (conversationId: string) => void;
   onDeleteChat: (conversationId: string) => void;
+  onSelectKnowledgeBase: () => void;
   deletingConversationId: string | null;
 }
 
@@ -23,17 +24,16 @@ export default function Sidebar({
   onMobileClose,
   conversations,
   activeConversationId,
+  isKnowledgeBaseActive = false,
   onNewChat,
   onSelectChat,
   onDeleteChat,
+  onSelectKnowledgeBase,
   deletingConversationId,
 }: SidebarProps) {
   // Main sidebar state
   const [collapsed, setCollapsed] = useState(false);
   const [showText, setShowText] = useState(true);
-
-  // Document sidebar state
-  const [documentsOpen, setDocumentsOpen] = useState(false);
 
   // Show text after sidebar expands
   useEffect(() => {
@@ -70,13 +70,6 @@ export default function Sidebar({
         return;
       }
 
-      // Close document sidebar first
-      if (documentsOpen) {
-        setDocumentsOpen(false);
-        return;
-      }
-
-      // Otherwise close mobile sidebar
       if (mobileOpen) {
         onMobileClose();
       }
@@ -86,7 +79,7 @@ export default function Sidebar({
     return () => {
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [documentsOpen, mobileOpen, onMobileClose]);
+  }, [mobileOpen, onMobileClose]);
 
   // Toggle main sidebar
   const toggleSidebar = () => {
@@ -101,7 +94,6 @@ export default function Sidebar({
       return;
     }
 
-    setDocumentsOpen(false);
     setShowText(false);
 
     window.setTimeout(() => {
@@ -109,25 +101,12 @@ export default function Sidebar({
     }, 150);
   };
 
-  // Documents button toggle
+  // Knowledge Base button click
   const handleDocumentsClick = () => {
-    if (collapsed) {
-      setCollapsed(false);
-      setShowText(true);
-
-      window.setTimeout(() => {
-        setDocumentsOpen(true);
-      }, 200);
-
-      return;
+    onSelectKnowledgeBase();
+    if (typeof window !== "undefined" && window.innerWidth < 1024) {
+      onMobileClose();
     }
-
-    setDocumentsOpen((previous) => !previous);
-  };
-
-  // Close documents panel
-  const handleDocumentsClose = () => {
-    setDocumentsOpen(false);
   };
 
   return (
@@ -144,42 +123,35 @@ export default function Sidebar({
       {/* Sidebar Container */}
       <aside
         className={`fixed inset-y-0 left-0 z-50 flex h-screen flex-col border-r border-zinc-200 bg-[#f7f7f8] transition-all duration-300 ease-in-out ${
-          documentsOpen ? "w-72 sm:w-80" : collapsed ? "w-20" : "w-72"
+          collapsed ? "w-20" : "w-72"
         } ${
           mobileOpen ? "translate-x-0" : "-translate-x-full"
         } lg:static lg:translate-x-0`}
       >
-        {documentsOpen ? (
-          <DocumentsPanel
-            open={documentsOpen}
-            onClose={handleDocumentsClose}
+        <div className="flex h-full flex-col">
+          <SidebarHeader
+            collapsed={collapsed}
+            showText={showText}
+            isKnowledgeBaseActive={isKnowledgeBaseActive}
+            onToggle={toggleSidebar}
+            onNewChat={onNewChat}
+            onDocumentsClick={handleDocumentsClick}
           />
-        ) : (
-          <div className="flex h-full flex-col">
-            <SidebarHeader
+
+          <div className="min-h-0 flex-1">
+            <RecentChats
               collapsed={collapsed}
               showText={showText}
-              documentsOpen={documentsOpen}
-              onToggle={toggleSidebar}
-              onNewChat={onNewChat}
-              onDocumentsClick={handleDocumentsClick}
+              conversations={conversations}
+              activeConversationId={activeConversationId}
+              onSelectChat={onSelectChat}
+              onDeleteChat={onDeleteChat}
+              deletingConversationId={deletingConversationId}
             />
-
-            <div className="min-h-0 flex-1">
-              <RecentChats
-                collapsed={collapsed}
-                showText={showText}
-                conversations={conversations}
-                activeConversationId={activeConversationId}
-                onSelectChat={onSelectChat}
-                onDeleteChat={onDeleteChat}
-                deletingConversationId={deletingConversationId}
-              />
-            </div>
-
-            <SidebarFooter collapsed={collapsed} showText={showText} />
           </div>
-        )}
+
+          <SidebarFooter collapsed={collapsed} showText={showText} />
+        </div>
       </aside>
     </>
   );

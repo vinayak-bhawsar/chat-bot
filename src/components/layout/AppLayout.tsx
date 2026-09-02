@@ -15,6 +15,7 @@ import {
 
 import Sidebar from "@/components/layout/Sidebar";
 import MainContent from "@/components/chat/MainContent";
+import KnowledgeBaseContent from "@/components/documents/KnowledgeBaseContent";
 
 import { Conversation } from "@/types/chat";
 import { apiRequest } from "@/lib/api";
@@ -395,6 +396,7 @@ function getErrorStatus(
 interface AppLayoutProps {
   children?: React.ReactNode;
   initialConversationId?: string;
+  initialView?: "chat" | "knowledge_base";
 }
 
 // ================================================================
@@ -710,6 +712,7 @@ function DeleteConversationModal({
 function AppLayoutContent({
   children,
   initialConversationId,
+  initialView,
 }: AppLayoutProps) {
   const {
     isAuthenticated,
@@ -731,6 +734,13 @@ function AppLayoutContent({
   useEffect(() => {
     setIsMounted(true);
   }, []);
+
+  const [activeView, setActiveView] = useState<"chat" | "knowledge_base">(() => {
+    if (initialView === "knowledge_base" || pathname === "/documents") {
+      return "knowledge_base";
+    }
+    return "chat";
+  });
 
   const [
     mobileSidebarOpen,
@@ -790,6 +800,11 @@ function AppLayoutContent({
     const handlePopState = () => {
       if (typeof window === "undefined") return;
       const currentPath = window.location.pathname;
+      if (currentPath === "/documents") {
+        setActiveView("knowledge_base");
+        return;
+      }
+      setActiveView("chat");
       if (currentPath === "/") {
         setActiveConversationId(null);
       } else if (currentPath.startsWith("/c/")) {
@@ -1045,7 +1060,10 @@ function AppLayoutContent({
       return;
     }
 
-    if (routeConversationId) {
+    if (pathname === "/documents") {
+      setActiveView("knowledge_base");
+    } else if (routeConversationId) {
+      setActiveView("chat");
       if (activeConversationId !== routeConversationId) {
         setActiveConversationId(routeConversationId);
         setConversations((previous) => {
@@ -1057,6 +1075,7 @@ function AppLayoutContent({
         });
       }
     } else if (pathname === "/") {
+      setActiveView("chat");
       if (activeConversationId !== null && !activeConversationId.startsWith("temp-")) {
         setActiveConversationId(null);
       }
@@ -1069,6 +1088,7 @@ function AppLayoutContent({
 
   const createNewChat =
     (): string => {
+      setActiveView("chat");
       if (
         activeConversationId
       ) {
@@ -1586,6 +1606,8 @@ function AppLayoutContent({
       const cleanConversationId =
         conversationId.trim();
 
+      setActiveView("chat");
+
       // 1. Immediately activate ID in state
       setActiveConversationId(
         cleanConversationId
@@ -1636,6 +1658,20 @@ function AppLayoutContent({
         cleanConversationId
       );
     };
+
+  // ==============================================================
+  // SELECT KNOWLEDGE BASE
+  // ==============================================================
+
+  const selectKnowledgeBase = () => {
+    setActiveView("knowledge_base");
+    setMobileSidebarOpen(false);
+    if (typeof window !== "undefined" && window.location.pathname !== "/documents") {
+      try {
+        window.history.pushState(null, "", "/documents");
+      } catch {}
+    }
+  };
 
   // ==============================================================
   // REQUEST DELETE
@@ -2099,6 +2135,9 @@ function AppLayoutContent({
         activeConversationId={
           activeConversationId
         }
+        isKnowledgeBaseActive={
+          activeView === "knowledge_base"
+        }
         onNewChat={
           createNewChat
         }
@@ -2107,6 +2146,9 @@ function AppLayoutContent({
         }
         onDeleteChat={
           requestDeleteConversation
+        }
+        onSelectKnowledgeBase={
+          selectKnowledgeBase
         }
         deletingConversationId={
           deletingConversationId
@@ -2186,7 +2228,7 @@ function AppLayoutContent({
                 font-semibold
               "
             >
-              AI Chat
+              {activeView === "knowledge_base" ? "Knowledge Base" : "AI Chat"}
             </span>
           </div>
 
@@ -2229,33 +2271,37 @@ function AppLayoutContent({
             overflow-hidden
           "
         >
-          <MainContent
-            activeConversationId={
-              activeConversationId
-            }
-            conversations={
-              conversations
-            }
-            isLoadingHistory={
-              Boolean(
-                loadingHistoryId === activeConversationId &&
-                (!conversations.find((c) => c.id === activeConversationId)?.messages ||
-                  conversations.find((c) => c.id === activeConversationId)!.messages.length === 0)
-              )
-            }
-            onNewChat={
-              createNewChat
-            }
-            onUpdateConversation={
-              updateConversation
-            }
-            onReplaceConversationId={
-              replaceConversationId
-            }
-            onUpdateConversationTitle={
-              updateConversationTitle
-            }
-          />
+          {activeView === "knowledge_base" ? (
+            <KnowledgeBaseContent />
+          ) : (
+            <MainContent
+              activeConversationId={
+                activeConversationId
+              }
+              conversations={
+                conversations
+              }
+              isLoadingHistory={
+                Boolean(
+                  loadingHistoryId === activeConversationId &&
+                  (!conversations.find((c) => c.id === activeConversationId)?.messages ||
+                    conversations.find((c) => c.id === activeConversationId)!.messages.length === 0)
+                )
+              }
+              onNewChat={
+                createNewChat
+              }
+              onUpdateConversation={
+                updateConversation
+              }
+              onReplaceConversationId={
+                replaceConversationId
+              }
+              onUpdateConversationTitle={
+                updateConversationTitle
+              }
+            />
+          )}
         </main>
       </div>
 
@@ -2294,6 +2340,7 @@ function AppLayoutContent({
 export default function AppLayout({
   children,
   initialConversationId,
+  initialView,
 }: AppLayoutProps) {
   const {
     isLoading:
@@ -2307,7 +2354,10 @@ export default function AppLayout({
   }
 
   return (
-    <AppLayoutContent initialConversationId={initialConversationId}>
+    <AppLayoutContent
+      initialConversationId={initialConversationId}
+      initialView={initialView}
+    >
       {children}
     </AppLayoutContent>
   );
