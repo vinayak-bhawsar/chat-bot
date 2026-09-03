@@ -500,11 +500,15 @@ export default function MainContent({
         });
       };
 
+      const isNewChat = !convId;
+
       let response: any;
       try {
         response = await uploadDocument({
           file,
           conversation_id: convId,
+          is_conversation_new: isNewChat,
+          is_chat: true,
           onProgress: handleProgress,
         });
       } catch (firstErr) {
@@ -516,6 +520,8 @@ export default function MainContent({
         response = await uploadDocument({
           file,
           conversation_id: convId,
+          is_conversation_new: isNewChat,
+          is_chat: true,
           onProgress: handleProgress,
         });
       }
@@ -535,7 +541,7 @@ export default function MainContent({
 
       const cleanDocId = String(docId).trim();
       recordChatAttachmentDocId(cleanDocId);
-      const uploadConvId = extractConversationId(response);
+      const uploadConvId = extractConversationId(response) || convId;
       const totalChunks = response?.chunks ?? response?.total_chunks ?? response?.data?.chunks;
 
       if (

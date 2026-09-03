@@ -81,5 +81,9 @@ export interface UploadDocumentOptions {
 
   conversation_id?: string | null;
 
+  is_conversation_new?: boolean;
+
+  is_chat?: boolean;
+
   onProgress?: (progress: UploadDocumentProgress) => void;
 }
