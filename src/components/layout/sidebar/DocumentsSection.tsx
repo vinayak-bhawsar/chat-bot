@@ -42,6 +42,14 @@ import { getLocalizedErrorMessage } from "@/i18n";
 import { DocumentItem } from "@/types/documents";
 import { useAuth } from "@/context/AuthContext";
 import { getFileDetails, cleanDisplayName } from "@/lib/fileTypes";
+import { getChatAttachmentDocIds } from "@/lib/attachmentStorage";
+import {
+  normalizeDocumentItem,
+  mergeWithStoredFolders,
+  saveStoredFolder,
+  removeStoredFolder,
+} from "@/lib/folderStorage";
+import { moveToTrash } from "@/lib/trashStorage";
 
 function formatFileSize(bytes?: number): string {
   if (!bytes || bytes <= 0) return "";
@@ -234,16 +242,23 @@ export default function DocumentsSection({
           );
 
         const resAny = response as any;
-        const allItems: DocumentItem[] =
+        const allItems: any[] =
           (Array.isArray(resAny?.data?.items) && resAny.data.items) ||
           (Array.isArray(resAny?.items) && resAny.items) ||
           (Array.isArray(resAny?.data) && resAny.data) ||
           (Array.isArray(resAny) && resAny) ||
           [];
 
-        // Only store/display global documents (conversation_id === null/undefined) and folders in Knowledge Base
-        const knowledgeBaseDocs = allItems.filter(
-          (item) => item.is_folder || !item.conversation_id || item.conversation_id === "null" || item.conversation_id === ""
+        const mergedItems = mergeWithStoredFolders(allItems, parentId);
+        const chatDocIds = getChatAttachmentDocIds();
+        const knowledgeBaseDocs = mergedItems.filter(
+          (item) =>
+            item.is_folder ||
+            ((!item.conversation_id ||
+              item.conversation_id === "null" ||
+              item.conversation_id === "" ||
+              item.conversation_id === "undefined") &&
+              !chatDocIds.has(item.id))
         );
 
         setDocuments(knowledgeBaseDocs);
@@ -312,10 +327,18 @@ export default function DocumentsSection({
       "documents:updated",
       handleDocumentsUpdated
     );
+    window.addEventListener(
+      "kb_folders_updated",
+      handleDocumentsUpdated
+    );
 
     return () => {
       window.removeEventListener(
         "documents:updated",
+        handleDocumentsUpdated
+      );
+      window.removeEventListener(
+        "kb_folders_updated",
         handleDocumentsUpdated
       );
     };
@@ -705,12 +728,39 @@ export default function DocumentsSection({
 
         setErrorMessage(null);
 
-        await createFolder({
-          file_name:
-            trimmedName,
-          parent_id:
-            currentFolderId,
+        let created: any = null;
+        try {
+          created = await createFolder({
+            file_name: trimmedName,
+            parent_id: currentFolderId,
+          });
+        } catch (createErr) {
+          console.warn("Backend createFolder error, saving locally:", createErr);
+        }
+
+        const folderId =
+          (created && (created.id || created.document_id || created.folder_id)) ||
+          crypto.randomUUID();
+
+        const newFolderItem = normalizeDocumentItem({
+          id: folderId,
+          file_name: trimmedName,
+          user_id: created?.user_id || "",
+          parent_id: currentFolderId,
+          is_folder: true,
+          mime_type: "application/folder",
+          size_bytes: 0,
+          status: "ready",
+          conversation_id: null,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
         });
+
+        saveStoredFolder(newFolderItem);
+        setDocuments((prev) => [
+          newFolderItem,
+          ...prev.filter((d) => d.id !== folderId),
+        ]);
 
         setFolderName("");
 
@@ -785,9 +835,12 @@ export default function DocumentsSection({
 
       setErrorMessage(null);
 
-      await deleteDocument(
-        deleteTarget.id
-      );
+      // Move to trash
+      moveToTrash(deleteTarget);
+
+      if (deleteTarget.is_folder) {
+        removeStoredFolder(deleteTarget.id);
+      }
 
       setDeleteTarget(null);
 

@@ -257,7 +257,7 @@ export async function streamChat(
   };
 
   // ==============================================================
-  // SEND REQUEST
+  // SEND REQUEST (With auto-retry for server wake-up/cold starts)
   // ==============================================================
 
   let response: Response;
@@ -268,9 +268,22 @@ export async function streamChat(
       headers: buildHeaders(accessToken),
       body: JSON.stringify(payload),
     });
-  } catch (networkErr) {
-    console.error("Chat network error:", networkErr);
-    throw new Error(getLocalizedErrorMessage("NETWORK_ERROR"));
+  } catch (initialNetworkErr) {
+    console.warn(
+      "Initial chat request failed, retrying in 2s (server waking up)...",
+      initialNetworkErr
+    );
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      response = await fetch(`${API_URL}/conversation`, {
+        method: "POST",
+        headers: buildHeaders(accessToken),
+        body: JSON.stringify(payload),
+      });
+    } catch (networkErr) {
+      console.error("Chat network error after retry:", networkErr);
+      throw new Error(getLocalizedErrorMessage("NETWORK_ERROR"));
+    }
   }
 
   // ==============================================================
