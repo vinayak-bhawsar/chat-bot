@@ -1164,6 +1164,10 @@ export interface UploadDocumentOptions {
 
   conversation_id?: string | null;
 
+  is_conversation_new?: boolean;
+
+  is_chat?: boolean;
+
   onProgress?: (progress: UploadDocumentProgress) => void;
 }
 
@@ -1212,6 +1216,16 @@ export async function uploadDocument(
       ? null
       : options.conversation_id ??
       null;
+
+  const isConversationNew =
+    options instanceof File
+      ? false
+      : Boolean(options.is_conversation_new);
+
+  const isChat =
+    options instanceof File
+      ? false
+      : Boolean(options.is_chat);
 
   const onProgress =
     options instanceof File
@@ -1294,6 +1308,20 @@ export async function uploadDocument(
     formData.append(
       "conversation_id",
       conversationId
+    );
+  }
+
+  if (isConversationNew) {
+    formData.append(
+      "is_conversation_new",
+      "true"
+    );
+  }
+
+  if (isChat) {
+    formData.append(
+      "is_chat",
+      "true"
     );
   }
 
