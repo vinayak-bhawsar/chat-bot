@@ -184,14 +184,14 @@ export default function RecentChats({
           /* ======================================================
               CONVERSATIONS
               ====================================================== */
-          validConversations.map((conversation) => {
+          validConversations.map((conversation, convIdx) => {
             const conversationId = conversation.id;
             const title = getCleanChatTitle(conversation);
             const isActive = activeConversationId === conversationId;
             const isDeleting = deletingConversationId === conversationId;
 
             return (
-              <div key={conversationId} className="group relative">
+              <div key={`${conversationId}-${convIdx}`} className="group relative">
                 <button
                   type="button"
                   disabled={isDeleting}

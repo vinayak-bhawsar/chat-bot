@@ -54,6 +54,7 @@ import {
 import {
   saveAttachmentMetadata,
   migrateAttachmentMetadata,
+  recordChatAttachmentDocId,
 } from "@/lib/attachmentStorage";
 import { generateChatTitle, resolveConversationTitle } from "@/lib/chatTitle";
 
@@ -533,6 +534,7 @@ export default function MainContent({
       }
 
       const cleanDocId = String(docId).trim();
+      recordChatAttachmentDocId(cleanDocId);
       const uploadConvId = extractConversationId(response);
       const totalChunks = response?.chunks ?? response?.total_chunks ?? response?.data?.chunks;
 
@@ -799,6 +801,7 @@ export default function MainContent({
         }
 
         documentId = String(extractedDocId).trim();
+        recordChatAttachmentDocId(documentId);
         uploadConvId = extractConversationId(response) || convId || null;
         const totalChunks = response?.chunks ?? response?.total_chunks ?? response?.data?.chunks;
 
@@ -1702,6 +1705,8 @@ export default function MainContent({
                   String(message.role || "").toLowerCase() === "user" ||
                   Boolean(message.attachment && !message.isAssistant);
 
+                const msgKey = message.id ? `${message.id}-${msgIdx}` : `msg-${msgIdx}`;
+
                 const prevUserMsg = activeConversation.messages
                   .slice(0, msgIdx)
                   .reverse()
@@ -1713,7 +1718,7 @@ export default function MainContent({
                      USER MESSAGE (Right Aligned, Dark Bubble + Avatar)
                      ==================================================== */
                   <div
-                    key={message.id}
+                    key={msgKey}
                     className="flex justify-end items-end gap-2.5 my-3"
                   >
                     <div className="flex flex-col items-end gap-1.5 max-w-[85%] sm:max-w-[75%]">
@@ -1794,7 +1799,7 @@ export default function MainContent({
                      AGENT MESSAGE (Left Aligned, AI Badge + Avatar)
                      ==================================================== */
                   <div
-                    key={message.id}
+                    key={msgKey}
                     className="flex justify-start items-start gap-3 my-4 w-full"
                   >
                     <div

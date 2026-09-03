@@ -1401,10 +1401,12 @@ export async function uploadDocument(
   // ==============================================================
 
   let data: any = null;
+  let streamBodyConsumed = false;
 
   if (response.ok && response.body && typeof response.body.getReader === "function") {
     try {
       const reader = response.body.getReader();
+      streamBodyConsumed = true;
       const decoder = new TextDecoder();
       let buffer = "";
       let mergedObj: any = {};
@@ -1434,9 +1436,17 @@ export async function uploadDocument(
               if (parsed && typeof parsed === "object") {
                 mergedObj = { ...mergedObj, ...parsed };
                 if (onProgress) {
-                  const chunks = parsed.chunks ?? parsed.current_chunk ?? parsed.chunk_count ?? parsed.processed_chunks;
+                  const chunks =
+                    parsed.chunks ??
+                    parsed.current_chunk ??
+                    parsed.chunk_count ??
+                    parsed.processed_chunks;
                   const totalChunks = parsed.total_chunks ?? parsed.total;
-                  const percent = parsed.progress ?? (chunks && totalChunks ? Math.min(Math.round((chunks / totalChunks) * 100), 98) : undefined);
+                  const percent =
+                    parsed.progress ??
+                    (chunks && totalChunks
+                      ? Math.min(Math.round((chunks / totalChunks) * 100), 98)
+                      : undefined);
                   const msg =
                     parsed.message ||
                     parsed.step ||
@@ -1487,60 +1497,56 @@ export async function uploadDocument(
     }
   }
 
-  if (data === null) {
-    const contentType =
-      response.headers.get(
-        "content-type"
-      );
+  if (data === null && !streamBodyConsumed && !response.bodyUsed) {
+    const contentType = response.headers.get("content-type");
 
     if (
-      contentType?.includes(
-        "application/json"
-      ) ||
+      contentType?.includes("application/json") ||
       contentType?.includes("text/json") ||
       contentType?.includes("application/problem+json")
     ) {
       try {
-        data =
-          await response.json();
+        data = await response.json();
       } catch {
         data = null;
       }
     }
 
-    if (data === null) {
-      const text =
-        await response.text();
-
-      if (text) {
-        const trimmed = text.trim();
-        if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
-          try {
-            data = JSON.parse(trimmed);
-          } catch {
-            data = text;
-          }
-        } else if (trimmed.includes("data:")) {
-          const lines = trimmed.split("\n");
-          let mergedObj: any = null;
-          for (const line of lines) {
-            const cleanLine = line.trim();
-            if (cleanLine.startsWith("data:")) {
-              const jsonStr = cleanLine.slice(5).trim();
-              if (jsonStr && jsonStr !== "[DONE]") {
-                try {
-                  const parsed = JSON.parse(jsonStr);
-                  if (parsed && typeof parsed === "object") {
-                    mergedObj = { ...(mergedObj || {}), ...parsed };
-                  }
-                } catch {}
+    if (data === null && !response.bodyUsed) {
+      try {
+        const text = await response.text();
+        if (text) {
+          const trimmed = text.trim();
+          if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+            try {
+              data = JSON.parse(trimmed);
+            } catch {
+              data = text;
+            }
+          } else if (trimmed.includes("data:")) {
+            const lines = trimmed.split("\n");
+            let mergedObj: any = null;
+            for (const line of lines) {
+              const cleanLine = line.trim();
+              if (cleanLine.startsWith("data:")) {
+                const jsonStr = cleanLine.slice(5).trim();
+                if (jsonStr && jsonStr !== "[DONE]") {
+                  try {
+                    const parsed = JSON.parse(jsonStr);
+                    if (parsed && typeof parsed === "object") {
+                      mergedObj = { ...(mergedObj || {}), ...parsed };
+                    }
+                  } catch {}
+                }
               }
             }
+            data = mergedObj || text;
+          } else {
+            data = text;
           }
-          data = mergedObj || text;
-        } else {
-          data = text;
         }
+      } catch {
+        data = null;
       }
     }
   }
@@ -1725,21 +1731,36 @@ export async function deleteDocument(
   documentId: string
 ): Promise<DeleteDocumentResponse> {
   if (!documentId) {
-    throw new ApiError(
-      "Document ID is required.",
-      400,
-      "BAD_REQUEST"
-    );
+    return {
+      success: true,
+      status_code: 200,
+      message: "Success",
+      error_code: null,
+    };
   }
 
-  return apiRequest<DeleteDocumentResponse>(
-    `/documents/${encodeURIComponent(
-      documentId
-    )}`,
-    {
-      method: "DELETE",
+  try {
+    return await apiRequest<DeleteDocumentResponse>(
+      `/documents/${encodeURIComponent(documentId)}`,
+      {
+        method: "DELETE",
+      }
+    );
+  } catch (err: any) {
+    if (
+      err?.statusCode === 404 ||
+      err?.status === 404 ||
+      String(err?.message || "").toLowerCase().includes("not found")
+    ) {
+      return {
+        success: true,
+        status_code: 200,
+        message: "Document already removed",
+        error_code: null,
+      };
     }
-  );
+    throw err;
+  }
 }
 
 // ================================================================

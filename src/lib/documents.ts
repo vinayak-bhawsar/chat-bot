@@ -163,17 +163,25 @@ export async function deleteDocument(
   documentId: string
 ): Promise<void> {
   if (!documentId) {
-    throw new ApiError(
-      getLocalizedErrorMessage("BAD_REQUEST", "Document ID is required."),
-      400,
-      "BAD_REQUEST"
-    );
+    return;
   }
 
-  await apiRequest(
-    `/documents/${encodeURIComponent(documentId)}`,
-    {
-      method: "DELETE",
+  try {
+    await apiRequest(
+      `/documents/${encodeURIComponent(documentId)}`,
+      {
+        method: "DELETE",
+      }
+    );
+  } catch (err: any) {
+    // 404 Document not found means it's already removed on backend or was local-only
+    if (
+      err?.statusCode === 404 ||
+      err?.status === 404 ||
+      String(err?.message || "").toLowerCase().includes("not found")
+    ) {
+      return;
     }
-  );
+    throw err;
+  }
 }

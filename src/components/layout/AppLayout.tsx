@@ -247,18 +247,21 @@ function extractMessages(
   return [];
 }
 
-// ================================================================
-// Message ID
-// ================================================================
-
 function getMessageId(
-  message: BackendMessage
+  message: BackendMessage,
+  index?: number,
+  conversationId?: string
 ): string {
-  return (
-    message.id ??
-    message.message_id ??
-    crypto.randomUUID()
-  );
+  if (message.message_id) {
+    return String(message.message_id);
+  }
+  if (message.id && message.id !== conversationId) {
+    return index !== undefined ? `${message.id}-${index}` : String(message.id);
+  }
+  if (conversationId && index !== undefined) {
+    return `msg-${conversationId}-${index}`;
+  }
+  return crypto.randomUUID();
 }
 
 function getMessageRole(message: any): "user" | "assistant" {
@@ -1379,7 +1382,7 @@ function AppLayoutContent({
         ).length;
 
         const messages: Conversation["messages"] = backendMessages.map(
-          (message: any) => {
+          (message: any, idx: number) => {
             const role = getMessageRole(message);
             const isUser = role === "user";
             const userIndex = isUser ? userMsgCount++ : -1;
@@ -1468,7 +1471,7 @@ function AppLayoutContent({
             const parsedSuggestions = rawSuggestions ? normalizeSuggestions(rawSuggestions) : undefined;
 
             return {
-              id: getMessageId(message),
+              id: getMessageId(message, idx, cleanConversationId),
               role,
               content,
               attachment,
