@@ -18,6 +18,7 @@ import {
   Image as ImageIcon,
   Loader2,
   LogIn,
+  MapPin,
   Paperclip,
   Square,
   X,
@@ -25,6 +26,7 @@ import {
 
 import { getLocalizedErrorMessage } from "@/i18n";
 import { getFileDetails, cleanDisplayName } from "@/lib/fileTypes";
+import { isLocationQuery } from "@/lib/maps";
 
 // ================================================================
 // Types
@@ -43,6 +45,14 @@ export interface UploadedDocument {
   isProcessing?: boolean;
 }
 
+export interface AttachedLocation {
+  latitude: number;
+  longitude: number;
+  altitude?: number | null;
+  address?: string | null;
+  full_address?: string | null;
+}
+
 function formatFileSize(bytes?: number): string {
   if (!bytes || bytes <= 0) return "";
   if (bytes < 1024) return `${bytes} B`;
@@ -56,9 +66,13 @@ interface ChatInputProps {
   isUploading: boolean;
   onUpload: (file: File) => Promise<void>;
   onRemoveFile: () => void;
-  onSubmit: (message: string) => void;
+  onSubmit: (message: string, coordinates?: AttachedLocation) => void;
   isStreaming?: boolean;
   isAuthenticated?: boolean;
+  attachedLocation?: AttachedLocation | null;
+  onOpenLocationPicker?: () => void;
+  onRemoveLocation?: () => void;
+  isLocating?: boolean;
 }
 
 // ================================================================
@@ -74,6 +88,10 @@ export default function ChatInput({
   onSubmit,
   isStreaming = false,
   isAuthenticated = false,
+  attachedLocation = null,
+  onOpenLocationPicker,
+  onRemoveLocation,
+  isLocating = false,
 }: ChatInputProps) {
   const [message, setMessage] = useState("");
   const [authModalOpen, setAuthModalOpen] = useState(false);
@@ -277,7 +295,7 @@ export default function ChatInput({
   const canSend =
     !isUploading &&
     !isStreaming &&
-    (message.trim().length > 0 || hasAttachment);
+    (message.trim().length > 0 || hasAttachment || Boolean(attachedLocation));
 
   // ==============================================================
   // Submit
@@ -290,7 +308,7 @@ export default function ChatInput({
 
     const trimmedMessage = message.trim();
 
-    if (!trimmedMessage && !hasAttachment) {
+    if (!trimmedMessage && !hasAttachment && !attachedLocation) {
       return;
     }
 
@@ -298,7 +316,7 @@ export default function ChatInput({
       return;
     }
 
-    onSubmit(trimmedMessage);
+    onSubmit(trimmedMessage, attachedLocation || undefined);
 
     setMessage("");
     setSelectedFile(null);
@@ -364,9 +382,6 @@ export default function ChatInput({
           focus-within:shadow-md
         "
       >
-        {/* ======================================================
-            ATTACHMENT PREVIEW (Authenticated only)
-        ====================================================== */}
 
         {/* ======================================================
             ATTACHMENT PREVIEW (ChatGPT Style Circular Progress)
@@ -586,6 +601,53 @@ export default function ChatInput({
           >
             <Paperclip className="h-4 w-4" />
           </button>
+
+          {/* ====================================================
+              Location Button (GPS / Map Pin)
+          ==================================================== */}
+
+          {onOpenLocationPicker && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenLocationPicker();
+              }}
+              disabled={isUploading || isStreaming || isLocating}
+              aria-label={attachedLocation ? "Change location" : "Add location"}
+              title={
+                attachedLocation
+                  ? `Location: ${attachedLocation.address || "Attached"}`
+                  : "Access GPS or drop pin on map"
+              }
+              className={`
+                flex
+                h-9
+                w-9
+                shrink-0
+                items-center
+                justify-center
+                rounded-xl
+                transition-all
+                cursor-pointer
+                disabled:cursor-not-allowed
+                disabled:opacity-40
+                ${
+                  attachedLocation
+                    ? "bg-[#eef9fb] text-[#0e879c] border border-[#56C5D9]/50 shadow-2xs"
+                    : isLocationQuery(message)
+                    ? "bg-[#eef9fb] text-[#0e879c] border border-[#56C5D9]/60 shadow-2xs ring-2 ring-[#56C5D9]/20"
+                    : "text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
+                }
+              `}
+            >
+              {isLocating ? (
+                <Loader2 className="h-4 w-4 animate-spin text-[#2ba8be]" />
+              ) : (
+                <MapPin className={`h-4 w-4 ${isLocationQuery(message) && !attachedLocation ? "text-[#0e879c]" : ""}`} />
+              )}
+            </button>
+          )}
 
           {/* ====================================================
               Hidden File Input

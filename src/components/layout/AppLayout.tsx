@@ -1077,11 +1077,6 @@ function AppLayoutContent({
           return previous;
         });
       }
-    } else if (pathname === "/") {
-      setActiveView("chat");
-      if (activeConversationId !== null && !activeConversationId.startsWith("temp-")) {
-        setActiveConversationId(null);
-      }
     }
   }, [routeConversationId, pathname, isAuthenticated]);
 
@@ -1115,9 +1110,9 @@ function AppLayoutContent({
             false
           );
 
-          if (isMounted && pathname !== "/") {
+          if (typeof window !== "undefined" && window.location.pathname !== "/") {
             try {
-              router.push("/");
+              window.history.pushState(null, "", "/");
             } catch {}
           }
 
@@ -1142,9 +1137,9 @@ function AppLayoutContent({
         false
       );
 
-      if (isMounted && pathname !== "/") {
+      if (typeof window !== "undefined" && window.location.pathname !== "/") {
         try {
-          router.push("/");
+          window.history.pushState(null, "", "/");
         } catch {}
       }
 
@@ -1175,14 +1170,19 @@ function AppLayoutContent({
     }
 
     setConversations((previous) => {
-      // Check for exact ID match or temporary active conversation
+      // Check for exact ID match or active/temporary conversation fallback
       const exactIndex = previous.findIndex((c) => c.id === conversationId);
-      const tempIndex =
-        exactIndex === -1 && !conversationId.startsWith("temp-")
-          ? previous.findIndex((c) => c.id.startsWith("temp-") || c.id === activeConversationId)
+      const fallbackIndex =
+        exactIndex === -1
+          ? previous.findIndex(
+              (c) =>
+                c.id === activeConversationId ||
+                (conversationId.startsWith("temp-") && (c.id.startsWith("temp-") || c.id === activeConversationId)) ||
+                (!conversationId.startsWith("temp-") && (c.id.startsWith("temp-") || c.id === activeConversationId))
+            )
           : -1;
 
-      const targetIndex = exactIndex !== -1 ? exactIndex : tempIndex;
+      const targetIndex = exactIndex !== -1 ? exactIndex : fallbackIndex;
       const existingConv = targetIndex !== -1 ? previous[targetIndex] : undefined;
 
       const messages =
@@ -1470,6 +1470,34 @@ function AppLayoutContent({
 
             const parsedSuggestions = rawSuggestions ? normalizeSuggestions(rawSuggestions) : undefined;
 
+            const locationCoords =
+              message.location_coordinates ||
+              message.locationCoordinates ||
+              message.metadata?.location_coordinates ||
+              message.metadata?.locationCoordinates ||
+              (typeof message.latitude === "number" && typeof message.longitude === "number"
+                ? {
+                    latitude: message.latitude,
+                    longitude: message.longitude,
+                    altitude: message.altitude ?? null,
+                    address: message.address || message.full_address,
+                    full_address: message.full_address || message.address,
+                  }
+                : undefined);
+
+            const locationReq = Boolean(
+              message.location_required ??
+              message.locationRequired ??
+              message.metadata?.location_required ??
+              (message.type === "location_request" || message.event === "location_request")
+            );
+
+            const locationMeth =
+              message.methods ||
+              message.location_methods ||
+              message.metadata?.methods ||
+              undefined;
+
             return {
               id: getMessageId(message, idx, cleanConversationId),
               role,
@@ -1479,6 +1507,9 @@ function AppLayoutContent({
               reasoningDurationSeconds: rawDuration ? Number(rawDuration) : undefined,
               sources: parsedSources && parsedSources.length > 0 ? parsedSources : undefined,
               suggestions: parsedSuggestions && parsedSuggestions.length > 0 ? parsedSuggestions : undefined,
+              locationRequired: locationReq || undefined,
+              locationMethods: Array.isArray(locationMeth) ? locationMeth : undefined,
+              locationCoordinates: locationCoords || undefined,
             };
           }
         );
@@ -1868,9 +1899,9 @@ function AppLayoutContent({
             null
           );
 
-          if (isMounted && pathname !== "/") {
+          if (typeof window !== "undefined" && window.location.pathname !== "/") {
             try {
-              router.replace("/");
+              window.history.replaceState(null, "", "/");
             } catch {}
           }
         }
@@ -1933,9 +1964,9 @@ function AppLayoutContent({
               null
             );
 
-            if (isMounted && pathname !== "/") {
+            if (typeof window !== "undefined" && window.location.pathname !== "/") {
               try {
-                router.replace("/");
+                window.history.replaceState(null, "", "/");
               } catch {}
             }
           }

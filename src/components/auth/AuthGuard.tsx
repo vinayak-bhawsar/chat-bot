@@ -56,31 +56,34 @@ export default function AuthGuard({
     const isPublicRoute =
       PUBLIC_ROUTES.includes(pathname);
 
-    // ------------------------------------------------------------
     // User is NOT logged in
-    // ------------------------------------------------------------
     if (
       !isAuthenticated &&
       !isPublicRoute
     ) {
-      try {
-        router.replace("/login");
-      } catch {}
-      return;
+      const timer = setTimeout(() => {
+        try {
+          router.replace("/login");
+        } catch {
+          window.location.replace("/login");
+        }
+      }, 0);
+      return () => clearTimeout(timer);
     }
 
-    // ------------------------------------------------------------
-    // User IS logged in
-    // Don't allow login/signup pages
-    // ------------------------------------------------------------
+    // User IS logged in - don't allow login/signup pages
     if (
       isAuthenticated &&
       isPublicRoute
     ) {
-      try {
-        router.replace("/");
-      } catch {}
-      return;
+      const timer = setTimeout(() => {
+        try {
+          router.replace("/");
+        } catch {
+          window.location.replace("/");
+        }
+      }, 0);
+      return () => clearTimeout(timer);
     }
 
   }, [

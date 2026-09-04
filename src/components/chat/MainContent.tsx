@@ -7,6 +7,7 @@ import {
 } from "react";
 
 import {
+  AlertCircle,
   ArrowRight,
   ExternalLink,
   Eye,
@@ -16,19 +17,40 @@ import {
   FileArchive,
   Image as ImageIcon,
   Loader2,
+  LocateFixed,
+  MapPin,
+  Navigation,
   Sparkles,
   User,
+  HelpCircle,
+  RefreshCw,
+  Compass,
 } from "lucide-react";
 
 import { getFileDetails, cleanDisplayName } from "@/lib/fileTypes";
 import BrandLogo from "@/components/common/BrandLogo";
 import PdfViewerModal from "@/components/common/PdfViewerModal";
+import LocationPickerModal from "@/components/common/LocationPickerModal";
+import LocationPermissionGuideModal from "@/components/common/LocationPermissionGuideModal";
+import MapSidePanel from "@/components/common/MapSidePanel";
+import {
+  getCurrentBrowserLocation,
+  getGeolocationPermissionStatus,
+  reverseGeocode,
+  isLocationQuery,
+  isLocationPromptRequired,
+  saveStoredUserLocation,
+  getStoredUserLocation,
+  clearStoredUserLocation,
+  GeolocationCoordinates,
+} from "@/lib/maps";
 import MarkdownMessage from "./MarkdownMessage";
 import ReasoningAccordion from "./ReasoningAccordion";
 
 import WelcomeScreen from "./WelcomeScreen";
 import ChatInput, {
   UploadedDocument,
+  AttachedLocation,
 } from "./ChatInput";
 
 import {
@@ -363,6 +385,26 @@ export default function MainContent({
     });
 
   // ==============================================================
+  // LOCATION STATE (Phase 1)
+  // ==============================================================
+
+  const [isAcquiringLocation, setIsAcquiringLocation] = useState(false);
+  const [locationError, setLocationError] = useState<string | null>(null);
+  const [isLocationPickerOpen, setIsLocationPickerOpen] = useState(false);
+  const [isPermissionGuideOpen, setIsPermissionGuideOpen] = useState(false);
+  const [isMapSidePanelOpen, setIsMapSidePanelOpen] = useState(false);
+  const [sidePanelLocation, setSidePanelLocation] = useState<GeolocationCoordinates | null>(null);
+  const [pendingLocationPrompt, setPendingLocationPrompt] = useState<string>("");
+  const [pendingLocationMsgId, setPendingLocationMsgId] = useState<string | null>(null);
+  const [inputLocation, setInputLocation] = useState<GeolocationCoordinates | null>(null);
+
+  const handleOpenSideMap = (loc?: GeolocationCoordinates | null) => {
+    const targetLoc = loc || sidePanelLocation || null;
+    setSidePanelLocation(targetLoc || null);
+    setIsMapSidePanelOpen(true);
+  };
+
+  // ==============================================================
   // ACTIVE CONVERSATION
   // ==============================================================
 
@@ -464,9 +506,9 @@ export default function MainContent({
     try {
       const convId =
         activeConversation &&
-        !activeConversation.id.startsWith("temp-") &&
-        !activeConversation.id.startsWith("local-") &&
-        !activeConversation.id.startsWith("guest-")
+          !activeConversation.id.startsWith("temp-") &&
+          !activeConversation.id.startsWith("local-") &&
+          !activeConversation.id.startsWith("guest-")
           ? activeConversation.id
           : undefined;
 
@@ -493,8 +535,8 @@ export default function MainContent({
               (chunks && totalChunks
                 ? `Processing chunk ${chunks} of ${totalChunks}...`
                 : chunks
-                ? `Processing chunk ${chunks}...`
-                : "Processing chunks..."),
+                  ? `Processing chunk ${chunks}...`
+                  : "Processing chunks..."),
             isProcessing: p.status !== "completed" && p.status !== "ready",
           };
         });
@@ -608,11 +650,112 @@ export default function MainContent({
     };
 
   // ==============================================================
+  // ==============================================================
+  // LOCATION HANDLERS (Browser Geolocation & Google Maps Picker)
+  // ==============================================================
+
+  const handleCurrentLocation = async (userPrompt?: string) => {
+    if (isStreaming || isAcquiringLocation) return;
+    setLocationError(null);
+
+    const effectivePrompt = userPrompt || pendingLocationPrompt || "Nearby search";
+    setPendingLocationPrompt(effectivePrompt);
+
+    setIsAcquiringLocation(true);
+
+    try {
+      // Always invoke browser geolocation to trigger prompt or capture coordinates
+      const pos = await getCurrentBrowserLocation({
+        enableHighAccuracy: false,
+        timeout: 12000,
+        maximumAge: 0,
+      });
+
+      let address = "";
+      try {
+        address = await reverseGeocode(pos.latitude, pos.longitude);
+      } catch (geoErr) {
+        console.warn("Reverse geocode failed, falling back to coordinates:", geoErr);
+      }
+
+      const locationPayload = {
+        latitude: pos.latitude,
+        longitude: pos.longitude,
+        altitude: pos.altitude,
+        address: address || `${pos.latitude.toFixed(5)}, ${pos.longitude.toFixed(5)}`,
+        full_address: address || `${pos.latitude.toFixed(5)}, ${pos.longitude.toFixed(5)}`,
+      };
+
+      setIsAcquiringLocation(false);
+      setPendingLocationMsgId(null);
+      setPendingLocationPrompt("");
+      setInputLocation(null);
+
+      // Submit as a new turn with location coordinates - preserves complete chat history
+      await handleSubmit(effectivePrompt, locationPayload);
+    } catch (err: any) {
+      console.warn("Location request failed or was cancelled:", err);
+      setIsAcquiringLocation(false);
+      clearStoredUserLocation();
+      setInputLocation(null);
+
+      const isDenied =
+        err?.message?.toLowerCase().includes("denied") ||
+        err?.message?.toLowerCase().includes("permission") ||
+        err?.code === 1;
+
+      if (isDenied) {
+        setLocationError(
+          "Location permission is blocked in your browser. You can enable it using the steps below, or simply drop a pin on the map."
+        );
+      } else {
+        setLocationError(err?.message || "Could not retrieve your location.");
+      }
+      setIsPermissionGuideOpen(true);
+    }
+  };
+
+  const handleDropLocationClick = (userPrompt?: string) => {
+    if (isStreaming || isAcquiringLocation) return;
+    setLocationError(null);
+    setPendingLocationPrompt(userPrompt || "");
+    setIsLocationPickerOpen(true);
+  };
+
+  const handleSelectLocationCoordinates = async (coords: GeolocationCoordinates) => {
+    setIsLocationPickerOpen(false);
+    const locationPayload = {
+      latitude: coords.latitude,
+      longitude: coords.longitude,
+      altitude: coords.altitude ?? null,
+      address: coords.address || `${coords.latitude.toFixed(5)}, ${coords.longitude.toFixed(5)}`,
+      full_address: coords.address || `${coords.latitude.toFixed(5)}, ${coords.longitude.toFixed(5)}`,
+    };
+
+    let targetPrompt = pendingLocationPrompt;
+
+    if (!targetPrompt && activeConversation?.messages && activeConversation.messages.length > 0) {
+      const precedingUser = [...activeConversation.messages].reverse().find(
+        (m: any) => m.role === "user" || m.role === "human"
+      );
+      targetPrompt = precedingUser?.content || "Nearby search";
+    }
+
+    setPendingLocationMsgId(null);
+    setPendingLocationPrompt("");
+    setInputLocation(null);
+
+    // Submit as a new turn with location coordinates - preserves complete chat history
+    await handleSubmit(targetPrompt || "Nearby search", locationPayload);
+  };
+
+  // ==============================================================
   // SUBMIT MESSAGE
   // ==============================================================
 
   const handleSubmit = async (
-    message: string
+    message: string,
+    coordinates?: AttachedLocation | GeolocationCoordinates | null
   ) => {
     // ------------------------------------------------------------
     // Prevent duplicate request
@@ -627,6 +770,15 @@ export default function MainContent({
 
     const question =
       message.trim();
+
+    // ------------------------------------------------------------
+    // LOCATION RESOLUTION - ONLY send coordinates if explicitly provided by user action
+    // (Never automatically send cached/stored coordinates behind the user's back)
+    // ------------------------------------------------------------
+    const effectiveCoordinates = coordinates || undefined;
+
+    // Clear any lingering input location
+    setInputLocation(null);
 
     // ------------------------------------------------------------
     // DOCUMENT INFORMATION
@@ -734,10 +886,10 @@ export default function MainContent({
         );
 
         const convId =
-          conversation.messages.length > 0 &&
-          !conversation.id.startsWith("temp-") &&
-          !conversation.id.startsWith("local-") &&
-          !conversation.id.startsWith("guest-")
+          conversation.id &&
+            !conversation.id.startsWith("temp-") &&
+            !conversation.id.startsWith("local-") &&
+            !conversation.id.startsWith("guest-")
             ? conversation.id
             : undefined;
 
@@ -764,8 +916,8 @@ export default function MainContent({
                 (chunks && totalChunks
                   ? `Processing chunk ${chunks} of ${totalChunks}...`
                   : chunks
-                  ? `Processing chunk ${chunks}...`
-                  : "Processing chunks..."),
+                    ? `Processing chunk ${chunks}...`
+                    : "Processing chunks..."),
               isProcessing: p.status !== "completed" && p.status !== "ready",
             };
           });
@@ -910,21 +1062,14 @@ export default function MainContent({
 
     // ============================================================
     // DOCUMENT RESOLUTION
-    //
-    // ONLY attach documentId if user explicitly attached a document/image
-    // to THIS specific message input.
-    //
-    // For subsequent questions without an attachment, document_id is NULL
-    // so the backend can search Global Knowledge Base (document_id = NULL)
-    // and any conversation documents without being restricted to a single file.
     // ============================================================
 
     const isCurrentAttachment = Boolean(
       uploadedDocument?.file ||
-        (uploadedDocument?.documentId &&
-          uploadedDocument.documentId.trim()) ||
-        documentId ||
-        documentFile
+      (uploadedDocument?.documentId &&
+        uploadedDocument.documentId.trim()) ||
+      documentId ||
+      documentFile
     );
 
     const currentAttachmentSource =
@@ -967,10 +1112,10 @@ export default function MainContent({
 
     let backendConversationId: string | null =
       uploadConvId ||
-      (conversation.messages.length > 0 &&
-      !conversation.id.startsWith("temp-") &&
-      !conversation.id.startsWith("local-") &&
-      !conversation.id.startsWith("guest-")
+      (conversation.id &&
+        !conversation.id.startsWith("temp-") &&
+        !conversation.id.startsWith("local-") &&
+        !conversation.id.startsWith("guest-")
         ? conversation.id
         : null);
 
@@ -987,43 +1132,38 @@ export default function MainContent({
       conversationId: backendConversationId,
       documentId: selectedDocumentId,
       scope: documentScope,
+      coordinates: effectiveCoordinates,
     });
+
+    const targetAssistantId = crypto.randomUUID();
 
     // ============================================================
     // USER MESSAGE - Only show attachment card if attached to THIS message
     // ============================================================
 
     const userMessage: any = {
-      id:
-        crypto.randomUUID(),
-
-      role:
-        "user" as const,
-
-      content:
-        question && question.trim() ? question.trim() : "",
-
+      id: crypto.randomUUID(),
+      role: "user" as const,
+      content: question && question.trim() ? question.trim() : "",
+      locationCoordinates: effectiveCoordinates || undefined,
       attachment:
         isCurrentAttachment &&
-        (documentId || documentFile || selectedDocumentId)
+          (documentId || documentFile || selectedDocumentId)
           ? {
-              type: isImage ? "image" : "pdf",
-
-              documentId:
-                selectedDocumentId ||
-                documentId ||
-                "",
-
-              filename:
-                selectedDocumentName ||
-                filename ||
-                documentFile?.name ||
-                (isImage ? "image.png" : "document.pdf"),
-
-              file:
-                documentFile ||
-                undefined,
-            }
+            type: isImage ? "image" : "pdf",
+            documentId:
+              selectedDocumentId ||
+              documentId ||
+              "",
+            filename:
+              selectedDocumentName ||
+              filename ||
+              documentFile?.name ||
+              (isImage ? "image.png" : "document.pdf"),
+            file:
+              documentFile ||
+              undefined,
+          }
           : undefined,
     };
 
@@ -1031,7 +1171,7 @@ export default function MainContent({
       const userIndexInConv = conversation.messages.filter(
         (m: any) =>
           m.role === "user" ||
-          m.role === "human" ||
+          (m.role as string) === "human" ||
           String(m.role || "").toLowerCase() === "user"
       ).length;
 
@@ -1059,11 +1199,12 @@ export default function MainContent({
     // ============================================================
 
     const assistantMessage: any = {
-      id: crypto.randomUUID(),
+      id: targetAssistantId,
       role: "assistant" as const,
       content: "",
       reasoning: "",
       sources: undefined,
+      locationCoordinates: undefined,
     };
 
     // ============================================================
@@ -1093,15 +1234,6 @@ export default function MainContent({
     );
 
     try {
-      // ==========================================================
-      // IMPORTANT:
-      //
-      // document ID is passed as the
-      // 4th argument.
-      //
-      // filename is the 5th argument.
-      // ==========================================================
-
       await streamChat(
         effectiveQuestion,
 
@@ -1192,7 +1324,7 @@ export default function MainContent({
               targetId,
               (messages) =>
                 messages.map((msg) => {
-                  if (msg.id !== assistantMessage.id) {
+                  if (msg.id !== targetAssistantId) {
                     return msg;
                   }
 
@@ -1222,7 +1354,7 @@ export default function MainContent({
               targetId,
               (messages) =>
                 messages.map((msg) => {
-                  if (msg.id !== assistantMessage.id) {
+                  if (msg.id !== targetAssistantId) {
                     return msg;
                   }
 
@@ -1258,7 +1390,7 @@ export default function MainContent({
               targetId,
               (messages) =>
                 messages.map((msg) => {
-                  if (msg.id !== assistantMessage.id) {
+                  if (msg.id !== targetAssistantId) {
                     return msg;
                   }
 
@@ -1297,7 +1429,7 @@ export default function MainContent({
                   ) => {
                     if (
                       msg.id !==
-                      assistantMessage.id
+                      targetAssistantId
                     ) {
                       return msg;
                     }
@@ -1335,8 +1467,8 @@ export default function MainContent({
               (messages) =>
                 messages.map((msg) => {
                   const isTarget = messageId
-                    ? msg.id === messageId || msg.id === assistantMessage.id
-                    : msg.id === assistantMessage.id;
+                    ? msg.id === messageId || msg.id === targetAssistantId
+                    : msg.id === targetAssistantId;
 
                   if (!isTarget) {
                     return msg;
@@ -1345,6 +1477,61 @@ export default function MainContent({
                   return {
                     ...msg,
                     suggestions: suggestionsList,
+                  };
+                })
+            );
+          },
+
+          // ======================================================
+          // LOCATION REQUIRED / LOCATION REQUEST
+          // ======================================================
+
+          onLocationRequired: (messageId, methods, locationText) => {
+            const targetId =
+              backendConversationId ??
+              conversation.id;
+
+            onUpdateConversation(
+              targetId,
+              (messages) =>
+                messages.map((msg) => {
+                  const isTarget = messageId
+                    ? msg.id === messageId || msg.id === targetAssistantId
+                    : msg.id === targetAssistantId;
+
+                  if (!isTarget) {
+                    return msg;
+                  }
+
+                  return {
+                    ...msg,
+                    content: msg.content || locationText || msg.content,
+                    locationRequired: true,
+                    locationMethods: methods,
+                  };
+                })
+            );
+          },
+
+          // ======================================================
+          // LOCATION COORDINATES FROM BACKEND
+          // ======================================================
+
+          onLocationCoordinates: (coords) => {
+            const targetId =
+              backendConversationId ??
+              conversation.id;
+
+            onUpdateConversation(
+              targetId,
+              (messages) =>
+                messages.map((msg) => {
+                  if (msg.id !== targetAssistantId) {
+                    return msg;
+                  }
+                  return {
+                    ...msg,
+                    locationCoordinates: coords,
                   };
                 })
             );
@@ -1452,7 +1639,7 @@ export default function MainContent({
                   ) => {
                     if (
                       msg.id !==
-                      assistantMessage.id
+                      targetAssistantId
                     ) {
                       return msg;
                     }
@@ -1461,8 +1648,8 @@ export default function MainContent({
                       finalSources && finalSources.length > 0
                         ? finalSources
                         : msg.sources && msg.sources.length > 0
-                        ? msg.sources
-                        : undefined;
+                          ? msg.sources
+                          : undefined;
 
                     return {
                       ...msg,
@@ -1518,14 +1705,14 @@ export default function MainContent({
                   ) => {
                     if (
                       msg.id !==
-                      assistantMessage.id
+                      targetAssistantId
                     ) {
                       return msg;
                     }
 
                     return {
                       ...msg,
-
+                      isError: true,
                       content:
                         getLocalizedErrorMessage(
                           message,
@@ -1540,9 +1727,6 @@ export default function MainContent({
 
         // ========================================================
         // DOCUMENT ID
-        //
-        // THIS IS THE VALUE THAT MUST
-        // APPEAR IN NETWORK PAYLOAD.
         // ========================================================
 
         selectedDocumentId,
@@ -1551,7 +1735,16 @@ export default function MainContent({
         // FILE NAME
         // ========================================================
 
-        selectedDocumentName
+        selectedDocumentName,
+
+        // ========================================================
+        // COORDINATES & LOCATION
+        // ========================================================
+
+        effectiveCoordinates?.latitude,
+        effectiveCoordinates?.longitude,
+        effectiveCoordinates?.altitude,
+        effectiveCoordinates?.address
       );
     } catch (
     error
@@ -1577,14 +1770,14 @@ export default function MainContent({
             ) => {
               if (
                 msg.id !==
-                assistantMessage.id
+                targetAssistantId
               ) {
                 return msg;
               }
 
               return {
                 ...msg,
-
+                isError: true,
                 content:
                   getLocalizedErrorMessage(
                     error,
@@ -1629,9 +1822,7 @@ export default function MainContent({
         handleRemoveDocument
       }
 
-      onSubmit={
-        handleSubmit
-      }
+      onSubmit={(msg, coords) => handleSubmit(msg, coords)}
 
       isStreaming={
         isStreaming
@@ -1640,275 +1831,509 @@ export default function MainContent({
       isAuthenticated={
         isAuthenticated
       }
+
+      attachedLocation={inputLocation}
+
+      onOpenLocationPicker={() => {
+        setPendingLocationMsgId(null);
+        setPendingLocationPrompt("");
+        setIsLocationPickerOpen(true);
+      }}
+
+      onRemoveLocation={() => {
+        clearStoredUserLocation();
+        setInputLocation(null);
+      }}
+
+      isLocating={isAcquiringLocation}
     />
   );
 
   return (
-    <main className="flex h-full min-w-0 flex-1 flex-col bg-[#f7f7f8] text-zinc-900">
+    <div className="flex h-full w-full min-w-0 flex-row overflow-hidden bg-[#f7f7f8] text-zinc-900">
       {/* ==========================================================
-          WELCOME SCREEN OR ACTIVE CHAT
+          LEFT / CENTER: MAIN CHAT COLUMN
           ========================================================== */}
-      {!activeConversation ? (
-        <div className="flex flex-1 flex-col items-center justify-center px-4 pb-10">
-          <WelcomeScreen />
+      <main className="flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-[#f7f7f8] text-zinc-900">
+        {/* ==========================================================
+            WELCOME SCREEN OR ACTIVE CHAT
+            ========================================================== */}
+        {!activeConversation ? (
+          <div className="flex flex-1 flex-col items-center justify-center px-4 pb-10">
+            <WelcomeScreen />
 
-          <div className="mt-6 w-full max-w-3xl">
-            {chatInput}
-          </div>
-        </div>
-      ) : (
-        <>
-          {/* ==========================================================
-              MESSAGES
-              ========================================================== */}
-          <div className="min-h-0 flex-1 overflow-y-auto px-3 py-6 sm:px-4">
-            <div className="mx-auto w-full max-w-3xl space-y-4">
-              {isLoadingHistory ? (
-                /* ======================================================
-                   SKELETON LOADING STATE (Smooth Transition)
-                   ====================================================== */
-                <div className="space-y-6 animate-pulse py-4">
-                  {/* User Skeleton Bubble */}
-                  <div className="flex justify-end items-end gap-2.5">
-                    <div className="space-y-2 max-w-[65%] w-full flex flex-col items-end">
-                      <div className="h-10 w-44 rounded-2xl rounded-br-xs bg-[#56C5D9]/20" />
-                    </div>
-                    <div className="h-7.5 w-7.5 shrink-0 rounded-xl bg-gradient-to-tr from-[#56C5D9]/40 to-[#2ba8be]/40" />
-                  </div>
-
-                  {/* AI Skeleton Bubble */}
-                  <div className="flex justify-start items-start gap-3">
-                    <div className="h-8 w-8 shrink-0 rounded-xl bg-zinc-200" />
-                    <div className="space-y-2.5 flex-1 max-w-[85%] pt-1">
-                      <div className="h-4 w-11/12 rounded-md bg-zinc-200/90" />
-                      <div className="h-4 w-4/5 rounded-md bg-zinc-200/80" />
-                      <div className="h-4 w-3/5 rounded-md bg-zinc-200/60" />
-                    </div>
-                  </div>
-
-                  {/* Second User Skeleton Bubble */}
-                  <div className="flex justify-end items-end gap-2.5 pt-2">
-                    <div className="space-y-2 max-w-[65%] w-full flex flex-col items-end">
-                      <div className="h-9 w-60 rounded-2xl rounded-br-xs bg-[#56C5D9]/20" />
-                    </div>
-                    <div className="h-7.5 w-7.5 shrink-0 rounded-xl bg-gradient-to-tr from-[#56C5D9]/40 to-[#2ba8be]/40" />
-                  </div>
-
-                  {/* Second AI Skeleton Bubble */}
-                  <div className="flex justify-start items-start gap-3">
-                    <div className="h-8 w-8 shrink-0 rounded-xl bg-zinc-200" />
-                    <div className="space-y-2.5 flex-1 max-w-[85%] pt-1">
-                      <div className="h-4 w-full rounded-md bg-zinc-200/90" />
-                      <div className="h-4 w-5/6 rounded-md bg-zinc-200/70" />
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                activeConversation.messages.map((message: any, msgIdx: number) => {
-                const isUserMessage =
-                  message.role === "user" ||
-                  message.role === "human" ||
-                  String(message.role || "").toLowerCase() === "user" ||
-                  Boolean(message.attachment && !message.isAssistant);
-
-                const msgKey = message.id ? `${message.id}-${msgIdx}` : `msg-${msgIdx}`;
-
-                const prevUserMsg = activeConversation.messages
-                  .slice(0, msgIdx)
-                  .reverse()
-                  .find((m: any) => m.role === "user" || m.role === "human");
-                const userPrompt = prevUserMsg?.content;
-
-                return isUserMessage ? (
-                  /* ====================================================
-                     USER MESSAGE (Right Aligned, Dark Bubble + Avatar)
-                     ==================================================== */
-                  <div
-                    key={msgKey}
-                    className="flex justify-end items-end gap-2.5 my-3"
-                  >
-                    <div className="flex flex-col items-end gap-1.5 max-w-[85%] sm:max-w-[75%]">
-                      {/* Attached File Card (Image or Document) */}
-                      {message.attachment && (() => {
-                        const fileDetails = getFileDetails(
-                          message.attachment.filename,
-                          message.attachment.file?.type
-                        );
-                        const isImageMsg =
-                          message.attachment.type === "image" ||
-                          fileDetails.category === "image";
-
-                        const handleOpenPreview = () => {
-                          setPreviewPdf({
-                            isOpen: true,
-                            filename: cleanDisplayName(
-                              message.attachment.filename,
-                              isImageMsg ? "image.png" : "document.pdf"
-                            ),
-                            documentId:
-                              message.attachment.documentId || null,
-                            file: message.attachment.file || null,
-                            url: message.attachment.url || null,
-                          });
-                        };
-
-                        if (isImageMsg) {
-                          return (
-                            <ImageAttachmentPreview
-                              attachment={message.attachment}
-                              onClick={handleOpenPreview}
-                            />
-                          );
-                        }
-
-                        return (
-                          <FileAttachmentCard
-                            attachment={message.attachment}
-                            onClick={handleOpenPreview}
-                          />
-                        );
-                      })()}
-
-                      {(() => {
-                        const isAutoSummaryPrompt =
-                          Boolean(message.attachment) &&
-                          Boolean(
-                            message.content &&
-                              (message.content === "Please summarize this document." ||
-                                message.content === "Please analyze this image." ||
-                                message.content.trim() === "")
-                          );
-
-                        if (!message.content || isAutoSummaryPrompt) {
-                          return null;
-                        }
-
-                        return (
-                          <div className="rounded-2xl rounded-br-xs bg-[#eef9fb] border border-[#56C5D9]/35 text-zinc-900 px-4 py-2.5 shadow-2xs">
-                            <div className="whitespace-pre-wrap leading-relaxed text-zinc-900 text-[14.5px]">
-                              {message.content}
-                            </div>
-                          </div>
-                        );
-                      })()}
-                    </div>
-
-                    <div
-                      className="flex h-7.5 w-7.5 shrink-0 items-center justify-center rounded-xl bg-gradient-to-tr from-[#56C5D9] to-[#2ba8be] text-white shadow-2xs mb-0.5"
-                      title="You"
-                    >
-                      <User className="h-4 w-4" />
-                    </div>
-                  </div>
-                ) : (
-                  /* ====================================================
-                     AGENT MESSAGE (Left Aligned, AI Badge + Avatar)
-                     ==================================================== */
-                  <div
-                    key={msgKey}
-                    className="flex justify-start items-start gap-3 my-4 w-full"
-                  >
-                    <div
-                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-white border border-zinc-200/90 shadow-2xs mt-0.5"
-                      title="AI Assistant"
-                    >
-                      <BrandLogo className="h-5 w-5" />
-                    </div>
-
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2 mb-1.5">
-                        <span className="text-[13px] font-semibold text-zinc-900">
-                          AI Assistant
-                        </span>
-                        <span className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded-md bg-[#56C5D9]/10 text-[#2ba8be] border border-[#56C5D9]/25">
-                          Agent
-                        </span>
-                      </div>
-
-                      <div className="text-[15px] leading-relaxed text-zinc-900">
-                        <ReasoningAccordion
-                          reasoning={message.reasoning}
-                          sources={message.sources || []}
-                          reasoningSteps={message.reasoningSteps}
-                          isStreaming={Boolean(isStreaming && msgIdx === activeConversation.messages.length - 1)}
-                          hasAnswer={Boolean(message.content && message.content.trim().length > 0)}
-                          durationSeconds={message.reasoningDurationSeconds}
-                          onSourceClick={(source) => {
-                            setPreviewPdf({
-                              isOpen: true,
-                              filename: cleanDisplayName(
-                                source.filename || "document.pdf",
-                                "document.pdf"
-                              ),
-                              documentId: source.documentId || null,
-                              file: null,
-                              url: source.url || null,
-                            });
-                          }}
-                        />
-                        <MarkdownMessage
-                          content={message.content}
-                          isStreaming={Boolean(
-                            isStreaming &&
-                            msgIdx === activeConversation.messages.length - 1 &&
-                            !message.content
-                          )}
-                        />
-
-                        {/* ====================================================
-                            FOLLOW-UP SUGGESTIONS
-                            ==================================================== */}
-                        {message.suggestions && message.suggestions.length > 0 && (
-                          <div className="mt-4 flex flex-col gap-2 pt-1">
-                            <div className="flex items-center gap-1.5 text-[11.5px] font-semibold text-zinc-500">
-                              <Sparkles className="h-3.5 w-3.5 text-[#2ba8be]" />
-                              <span>Suggested follow-ups</span>
-                            </div>
-
-                            <div className="flex flex-col sm:flex-row sm:flex-wrap gap-2">
-                              {(message.suggestions as string[]).slice(0, 3).map((suggestion: string, sIdx: number) => {
-                                if (!suggestion || typeof suggestion !== "string" || !suggestion.trim()) {
-                                  return null;
-                                }
-
-                                const cleanSuggestion = suggestion.trim();
-
-                                return (
-                                  <button
-                                    key={`sug-${message.id}-${sIdx}`}
-                                    type="button"
-                                    disabled={isStreaming}
-                                    onClick={() => {
-                                      if (isStreaming) return;
-                                      handleSubmit(cleanSuggestion);
-                                    }}
-                                    className="group flex items-center justify-between gap-2.5 rounded-xl border border-zinc-200/90 bg-zinc-50/80 px-3.5 py-2 text-left text-xs font-medium text-zinc-700 transition-all duration-150 hover:border-[#56C5D9]/70 hover:bg-[#eef9fb]/80 hover:text-zinc-900 hover:shadow-2xs active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
-                                  >
-                                    <span className="leading-snug break-words">{cleanSuggestion}</span>
-                                    <ArrowRight className="h-3 w-3 shrink-0 text-zinc-400 opacity-0 transition-all duration-150 group-hover:opacity-100 group-hover:translate-x-0.5 group-hover:text-[#2ba8be]" />
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                );
-              }))}
-            </div>
-          </div>
-
-          {/* ==========================================================
-              INPUT
-              ========================================================== */}
-          <div className="w-full px-3 pb-3 sm:px-4 sm:pb-4">
-            <div className="mx-auto w-full max-w-3xl">
+            <div className="mt-6 w-full max-w-3xl">
               {chatInput}
             </div>
           </div>
-        </>
+        ) : (
+          <>
+            {/* ==========================================================
+              MESSAGES
+              ========================================================== */}
+            <div className="min-h-0 flex-1 overflow-y-auto px-3 py-6 sm:px-4">
+              <div className="mx-auto w-full max-w-3xl space-y-4">
+                {isLoadingHistory ? (
+                  /* ======================================================
+                     SKELETON LOADING STATE (Smooth Transition)
+                     ====================================================== */
+                  <div className="space-y-6 animate-pulse py-4">
+                    {/* User Skeleton Bubble */}
+                    <div className="flex justify-end items-end gap-2.5">
+                      <div className="space-y-2 max-w-[65%] w-full flex flex-col items-end">
+                        <div className="h-10 w-44 rounded-2xl rounded-br-xs bg-[#56C5D9]/20" />
+                      </div>
+                      <div className="h-7.5 w-7.5 shrink-0 rounded-xl bg-gradient-to-tr from-[#56C5D9]/40 to-[#2ba8be]/40" />
+                    </div>
+
+                    {/* AI Skeleton Bubble */}
+                    <div className="flex justify-start items-start gap-3">
+                      <div className="h-8 w-8 shrink-0 rounded-xl bg-zinc-200" />
+                      <div className="space-y-2.5 flex-1 max-w-[85%] pt-1">
+                        <div className="h-4 w-11/12 rounded-md bg-zinc-200/90" />
+                        <div className="h-4 w-4/5 rounded-md bg-zinc-200/80" />
+                        <div className="h-4 w-3/5 rounded-md bg-zinc-200/60" />
+                      </div>
+                    </div>
+
+                    {/* Second User Skeleton Bubble */}
+                    <div className="flex justify-end items-end gap-2.5 pt-2">
+                      <div className="space-y-2 max-w-[65%] w-full flex flex-col items-end">
+                        <div className="h-9 w-60 rounded-2xl rounded-br-xs bg-[#56C5D9]/20" />
+                      </div>
+                      <div className="h-7.5 w-7.5 shrink-0 rounded-xl bg-gradient-to-tr from-[#56C5D9]/40 to-[#2ba8be]/40" />
+                    </div>
+
+                    {/* Second AI Skeleton Bubble */}
+                    <div className="flex justify-start items-start gap-3">
+                      <div className="h-8 w-8 shrink-0 rounded-xl bg-zinc-200" />
+                      <div className="space-y-2.5 flex-1 max-w-[85%] pt-1">
+                        <div className="h-4 w-full rounded-md bg-zinc-200/90" />
+                        <div className="h-4 w-5/6 rounded-md bg-zinc-200/70" />
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  activeConversation.messages.map((message: any, msgIdx: number) => {
+                    const isUserMessage =
+                      message.role === "user" ||
+                      message.role === "human" ||
+                      String(message.role || "").toLowerCase() === "user" ||
+                      Boolean(message.attachment && !message.isAssistant);
+
+                    const msgKey = message.id ? `${message.id}-${msgIdx}` : `msg-${msgIdx}`;
+
+                    const prevUserMsg = activeConversation.messages
+                      .slice(0, msgIdx)
+                      .reverse()
+                      .find((m: any) => m.role === "user" || m.role === "human");
+                    const userPrompt = prevUserMsg?.content;
+
+                    return isUserMessage ? (
+                      /* ====================================================
+                         USER MESSAGE (Right Aligned, Dark Bubble + Avatar)
+                         ==================================================== */
+                      <div
+                        key={msgKey}
+                        className="flex justify-end items-end gap-2.5 my-3"
+                      >
+                        <div className="flex flex-col items-end gap-1.5 max-w-[85%] sm:max-w-[75%]">
+                          {/* Attached File Card (Image or Document) */}
+                          {message.attachment && (() => {
+                            const fileDetails = getFileDetails(
+                              message.attachment.filename,
+                              message.attachment.file?.type
+                            );
+                            const isImageMsg =
+                              message.attachment.type === "image" ||
+                              fileDetails.category === "image";
+
+                            const handleOpenPreview = () => {
+                              setPreviewPdf({
+                                isOpen: true,
+                                filename: cleanDisplayName(
+                                  message.attachment.filename,
+                                  isImageMsg ? "image.png" : "document.pdf"
+                                ),
+                                documentId:
+                                  message.attachment.documentId || null,
+                                file: message.attachment.file || null,
+                                url: message.attachment.url || null,
+                              });
+                            };
+
+                            if (isImageMsg) {
+                              return (
+                                <ImageAttachmentPreview
+                                  attachment={message.attachment}
+                                  onClick={handleOpenPreview}
+                                />
+                              );
+                            }
+
+                            return (
+                              <FileAttachmentCard
+                                attachment={message.attachment}
+                                onClick={handleOpenPreview}
+                              />
+                            );
+                          })()}
+
+
+                          {(() => {
+                            const isAutoSummaryPrompt =
+                              Boolean(message.attachment) &&
+                              Boolean(
+                                message.content &&
+                                (message.content === "Please summarize this document." ||
+                                  message.content === "Please analyze this image." ||
+                                  message.content.trim() === "")
+                              );
+
+                            if (!message.content || isAutoSummaryPrompt) {
+                              return null;
+                            }
+
+                            return (
+                              <div className="rounded-2xl rounded-br-xs bg-[#eef9fb] border border-[#56C5D9]/35 text-zinc-900 px-4 py-2.5 shadow-2xs">
+                                <div className="whitespace-pre-wrap leading-relaxed text-zinc-900 text-[14.5px]">
+                                  {message.content}
+                                </div>
+                                {message.locationCoordinates && (message.locationCoordinates.address || message.locationCoordinates.latitude) && (
+                                  <div className="mt-1.5 flex items-center gap-1.5 text-[11.5px] font-medium text-[#0e879c] border-t border-[#56C5D9]/20 pt-1.5">
+                                    <MapPin className="h-3.5 w-3.5 shrink-0 text-[#2ba8be]" />
+                                    <span className="truncate max-w-[240px] sm:max-w-[320px]">
+                                      {message.locationCoordinates.address ||
+                                        `${message.locationCoordinates.latitude.toFixed(4)}, ${message.locationCoordinates.longitude.toFixed(4)}`}
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })()}
+                        </div>
+
+                        <div
+                          className="flex h-7.5 w-7.5 shrink-0 items-center justify-center rounded-xl bg-gradient-to-tr from-[#56C5D9] to-[#2ba8be] text-white shadow-2xs mb-0.5"
+                          title="You"
+                        >
+                          <User className="h-4 w-4" />
+                        </div>
+                      </div>
+                    ) : (
+                      /* ====================================================
+                         AGENT MESSAGE (Left Aligned, AI Badge + Avatar)
+                         ==================================================== */
+                      <div
+                        key={msgKey}
+                        className="flex justify-start items-start gap-3 my-4 w-full"
+                      >
+                        <div
+                          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-white border border-zinc-200/90 shadow-2xs mt-0.5"
+                          title="AI Assistant"
+                        >
+                          <BrandLogo className="h-5 w-5" />
+                        </div>
+
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2 mb-1.5">
+                            <span className="text-[13px] font-semibold text-zinc-900">
+                              AI Assistant
+                            </span>
+                            <span className="text-[10px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded-md bg-[#56C5D9]/10 text-[#2ba8be] border border-[#56C5D9]/25">
+                              Agent
+                            </span>
+                          </div>
+
+                          <div className="text-[15px] leading-relaxed text-zinc-900">
+                            <ReasoningAccordion
+                              reasoning={message.reasoning}
+                              sources={message.sources || []}
+                              reasoningSteps={message.reasoningSteps}
+                              isStreaming={Boolean(isStreaming && msgIdx === activeConversation.messages.length - 1)}
+                              hasAnswer={Boolean(message.content && message.content.trim().length > 0)}
+                              durationSeconds={message.reasoningDurationSeconds}
+                              onSourceClick={(source) => {
+                                setPreviewPdf({
+                                  isOpen: true,
+                                  filename: cleanDisplayName(
+                                    source.filename || "document.pdf",
+                                    "document.pdf"
+                                  ),
+                                  documentId: source.documentId || null,
+                                  file: null,
+                                  url: source.url || null,
+                                });
+                              }}
+                            />
+                            <MarkdownMessage
+                              content={message.content}
+                              isStreaming={Boolean(
+                                isStreaming &&
+                                msgIdx === activeConversation.messages.length - 1 &&
+                                !message.content
+                              )}
+                            />
+
+                            {/* ====================================================
+                            LOCATION ACTIONS (Get current location & Drop your location)
+                            ==================================================== */}
+                            {(() => {
+                              // 1. DO NOT show while still streaming or if answer has not yet been generated by the agent
+                              if (isStreaming && msgIdx === activeConversation.messages.length - 1) {
+                                return null;
+                              }
+                              if (!message.content || !message.content.trim()) {
+                                return null;
+                              }
+
+                              // 2. Only show on the latest/current assistant message in the conversation (hide on previous turns)
+                              const lastAssistantIdx = activeConversation.messages
+                                .map((m: any) => m.role)
+                                .lastIndexOf("assistant");
+                              const isCurrentAssistant =
+                                msgIdx === lastAssistantIdx ||
+                                msgIdx === activeConversation.messages.length - 1;
+
+                              if (!isCurrentAssistant) return null;
+
+                              const precedingUserMsg = activeConversation.messages
+                                .slice(0, msgIdx)
+                                .reverse()
+                                .find(
+                                  (m: any) =>
+                                    m.role === "user" ||
+                                    (m.role as string) === "human" ||
+                                    String(m.role || "").toLowerCase() === "user"
+                                );
+                              const userPrompt = precedingUserMsg?.content || "Nearby search";
+
+                              const isLocationPrompt = isLocationPromptRequired(
+                                message,
+                                precedingUserMsg?.content
+                              );
+
+                              if (!isLocationPrompt) return null;
+
+                              return (
+                                <div className="mt-4 flex flex-col gap-2.5 pt-1">
+                                  <div className="flex items-center gap-1.5 text-[11.5px] font-semibold text-zinc-600">
+                                    <MapPin className="h-3.5 w-3.5 text-[#2ba8be]" />
+                                    <span>Please share or select your location for nearby results</span>
+                                  </div>
+
+                                  <div className="flex flex-col sm:flex-row sm:flex-wrap gap-2">
+                                    {/* 1. Get current location from browser */}
+                                    <button
+                                      type="button"
+                                      disabled={isStreaming || isAcquiringLocation}
+                                      onClick={() =>
+                                        handleCurrentLocation(
+                                          userPrompt || "Nearby search"
+                                        )
+                                      }
+                                      className="group flex items-center justify-between gap-2.5 rounded-xl border border-zinc-200/90 bg-zinc-50/80 px-3.5 py-2.5 text-left text-xs font-medium text-zinc-700 transition-all duration-150 hover:border-[#56C5D9]/70 hover:bg-[#eef9fb]/80 hover:text-zinc-900 hover:shadow-2xs active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
+                                    >
+                                      <span className="flex items-center gap-2">
+                                        {isAcquiringLocation ? (
+                                          <Loader2 className="h-4 w-4 animate-spin text-[#2ba8be]" />
+                                        ) : (
+                                          <LocateFixed className="h-4 w-4 text-[#2ba8be]" />
+                                        )}
+                                        <span className="font-medium">
+                                          {isAcquiringLocation
+                                            ? "Accessing browser location..."
+                                            : "Get my current location"}
+                                        </span>
+                                      </span>
+                                      <ArrowRight className="h-3.5 w-3.5 shrink-0 text-zinc-400 opacity-0 transition-all duration-150 group-hover:opacity-100 group-hover:translate-x-0.5 group-hover:text-[#2ba8be]" />
+                                    </button>
+
+                                    {/* 2. Drop your location (Map Pin Picker) */}
+                                    <button
+                                      type="button"
+                                      disabled={isStreaming || isAcquiringLocation}
+                                      onClick={() =>
+                                        handleDropLocationClick(
+                                          userPrompt || "Nearby search"
+                                        )
+                                      }
+                                      className="group flex items-center justify-between gap-2.5 rounded-xl border border-zinc-200/90 bg-zinc-50/80 px-3.5 py-2.5 text-left text-xs font-medium text-zinc-700 transition-all duration-150 hover:border-[#56C5D9]/70 hover:bg-[#eef9fb]/80 hover:text-zinc-900 hover:shadow-2xs active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
+                                    >
+                                      <span className="flex items-center gap-2">
+                                        <MapPin className="h-4 w-4 text-[#2ba8be]" />
+                                        <span className="font-medium">Drop your location</span>
+                                      </span>
+                                      <ArrowRight className="h-3.5 w-3.5 shrink-0 text-zinc-400 opacity-0 transition-all duration-150 group-hover:opacity-100 group-hover:translate-x-0.5 group-hover:text-[#2ba8be]" />
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })()}
+
+                            {/* ====================================================
+                            OPEN THE MAP OPTION (When location query & coordinates are available AND answer has been generated)
+                            ==================================================== */}
+                            {(() => {
+                              // 1. DO NOT show while still streaming or if answer has not yet been generated by the agent
+                              if (isStreaming && msgIdx === activeConversation.messages.length - 1) {
+                                return null;
+                              }
+                              if (!message.content || !message.content.trim()) {
+                                return null;
+                              }
+
+                              const precedingUserMsg = activeConversation.messages
+                                .slice(0, msgIdx)
+                                .reverse()
+                                .find(
+                                  (m: any) =>
+                                    m.role === "user" ||
+                                    (m.role as string) === "human" ||
+                                    String(m.role || "").toLowerCase() === "user"
+                                );
+                              const isLocationPrompt = isLocationPromptRequired(
+                                message,
+                                precedingUserMsg?.content
+                              );
+
+                              // 2. If the message is currently asking for location, do not show Open the map yet
+                              if (isLocationPrompt) return null;
+
+                              // 3. Strictly require destination/location coordinates returned from the backend on the assistant message
+                              const loc = message.locationCoordinates;
+
+                              if (!loc || typeof loc.latitude !== "number" || typeof loc.longitude !== "number") {
+                                return null;
+                              }
+
+                              return (
+                                <div className="mt-3 flex items-center gap-2 pt-0.5 animate-in fade-in duration-200">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenSideMap(loc)}
+                                    className="group inline-flex items-center gap-2 rounded-xl border border-[#56C5D9]/45 bg-[#eef9fb]/80 px-3.5 py-2 text-xs font-semibold text-[#0e879c] transition-all duration-150 hover:bg-[#56C5D9]/20 hover:border-[#56C5D9] hover:shadow-2xs active:scale-[0.98] cursor-pointer"
+                                  >
+                                    <Compass className="h-4 w-4 text-[#2ba8be]" />
+                                    <span>Open the map</span>
+                                    {loc.address && (
+                                      <span className="max-w-[150px] sm:max-w-[210px] truncate text-[11px] font-normal text-zinc-500 border-l border-[#56C5D9]/30 pl-2">
+                                        {loc.address}
+                                      </span>
+                                    )}
+                                    <ArrowRight className="h-3.5 w-3.5 text-[#0e879c] opacity-60 group-hover:opacity-100 group-hover:translate-x-0.5 transition" />
+                                  </button>
+                                </div>
+                              );
+                            })()}
+
+                            {/* ====================================================
+                            FOLLOW-UP SUGGESTIONS (Only shown on current/latest assistant message)
+                            ==================================================== */}
+                            {message.suggestions && message.suggestions.length > 0 && (() => {
+                              const lastAssistantIdx = activeConversation.messages
+                                .map((m: any) => m.role)
+                                .lastIndexOf("assistant");
+                              const isCurrentAssistant = msgIdx === lastAssistantIdx || msgIdx === activeConversation.messages.length - 1;
+
+                              // Default hide old suggestions when user sends a new query
+                              if (!isCurrentAssistant) return null;
+
+                              return (
+                                <div className="mt-4 flex flex-col gap-2 pt-1 animate-in fade-in duration-200">
+                                  <div className="flex items-center gap-1.5 text-[11.5px] font-semibold text-zinc-500">
+                                    <Sparkles className="h-3.5 w-3.5 text-[#2ba8be]" />
+                                    <span>Suggested follow-ups</span>
+                                  </div>
+
+                                  <div className="flex flex-col sm:flex-row sm:flex-wrap gap-2">
+                                    {(message.suggestions as string[]).slice(0, 3).map((suggestion: string, sIdx: number) => {
+                                      if (!suggestion || typeof suggestion !== "string" || !suggestion.trim()) {
+                                        return null;
+                                      }
+
+                                      const cleanSuggestion = suggestion.trim();
+
+                                      return (
+                                        <button
+                                          key={`sug-${message.id}-${sIdx}`}
+                                          type="button"
+                                          disabled={isStreaming}
+                                          onClick={() => {
+                                            if (isStreaming) return;
+                                            handleSubmit(cleanSuggestion);
+                                          }}
+                                          className="group flex items-center justify-between gap-2.5 rounded-xl border border-zinc-200/90 bg-zinc-50/80 px-3.5 py-2 text-left text-xs font-medium text-zinc-700 transition-all duration-150 hover:border-[#56C5D9]/70 hover:bg-[#eef9fb]/80 hover:text-zinc-900 hover:shadow-2xs active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+                                        >
+                                          <span className="leading-snug break-words">{cleanSuggestion}</span>
+                                          <ArrowRight className="h-3 w-3 shrink-0 text-zinc-400 opacity-0 transition-all duration-150 group-hover:opacity-100 group-hover:translate-x-0.5 group-hover:text-[#2ba8be]" />
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              );
+                            })()}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  }))}
+              </div>
+            </div>
+
+            {/* ==========================================================
+              INPUT
+              ========================================================== */}
+            <div className="w-full px-3 pb-3 sm:px-4 sm:pb-4">
+              <div className="mx-auto w-full max-w-3xl">
+                {chatInput}
+              </div>
+            </div>
+          </>
+        )}
+      </main>
+
+      {/* ==========================================================
+          RIGHT-SIDE MAP PANEL (Desktop Docked Split View - No Overlap)
+          ========================================================== */}
+      {isMapSidePanelOpen && (
+        <aside className="hidden md:flex w-[380px] lg:w-[440px] xl:w-[490px] shrink-0 h-full border-l border-zinc-200/90 bg-white flex-col transition-all duration-200 animate-in slide-in-from-right">
+          <MapSidePanel
+            isOpen={isMapSidePanelOpen}
+            onClose={() => setIsMapSidePanelOpen(false)}
+            location={sidePanelLocation || inputLocation || getStoredUserLocation()}
+            onUpdateLocation={(coords) => {
+              setInputLocation(coords);
+              saveStoredUserLocation(coords);
+            }}
+          />
+        </aside>
+      )}
+
+      {/* ==========================================================
+          MOBILE MAP DRAWER (Slide-up modal for small screens)
+          ========================================================== */}
+      {isMapSidePanelOpen && (
+        <div
+          className="fixed inset-0 z-50 md:hidden flex flex-col justify-end bg-black/50 backdrop-blur-2xs animate-in fade-in duration-200"
+          onClick={() => setIsMapSidePanelOpen(false)}
+        >
+          <div
+            className="relative w-full h-[85vh] bg-white rounded-t-3xl shadow-2xl flex flex-col overflow-hidden animate-in slide-in-from-bottom duration-250"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <MapSidePanel
+              isOpen={isMapSidePanelOpen}
+              onClose={() => setIsMapSidePanelOpen(false)}
+              location={sidePanelLocation || inputLocation || getStoredUserLocation()}
+              onUpdateLocation={(coords) => {
+                setInputLocation(coords);
+                saveStoredUserLocation(coords);
+              }}
+            />
+          </div>
+        </div>
       )}
 
       {/* ==========================================================
@@ -1927,6 +2352,60 @@ export default function MainContent({
         file={previewPdf.file}
         url={previewPdf.url}
       />
-    </main>
+
+      {/* ==========================================================
+          LOCATION PICKER MODAL (GOOGLE PLACES)
+          ========================================================== */}
+      <LocationPickerModal
+        isOpen={isLocationPickerOpen}
+        onClose={() => setIsLocationPickerOpen(false)}
+        onSelectLocation={handleSelectLocationCoordinates}
+      />
+
+      {/* ==========================================================
+          LOCATION PERMISSION GUIDE MODAL
+          ========================================================== */}
+      <LocationPermissionGuideModal
+        isOpen={isPermissionGuideOpen}
+        onClose={() => setIsPermissionGuideOpen(false)}
+        errorMessage={locationError}
+        onSelectLocation={(coords) => {
+          setIsPermissionGuideOpen(false);
+          const locationPayload = {
+            latitude: coords.latitude,
+            longitude: coords.longitude,
+            altitude: coords.altitude ?? null,
+            address:
+              coords.address ||
+              `${coords.latitude.toFixed(5)}, ${coords.longitude.toFixed(5)}`,
+            full_address:
+              coords.address ||
+              `${coords.latitude.toFixed(5)}, ${coords.longitude.toFixed(5)}`,
+          };
+
+          let targetPrompt = pendingLocationPrompt;
+
+          if (!targetPrompt && activeConversation?.messages && activeConversation.messages.length > 0) {
+            const precedingUser = [...activeConversation.messages].reverse().find(
+              (m: any) => m.role === "user" || m.role === "human"
+            );
+            targetPrompt = precedingUser?.content || "Nearby search";
+          }
+
+          setPendingLocationMsgId(null);
+          setPendingLocationPrompt("");
+          setInputLocation(null);
+
+          handleSubmit(
+            targetPrompt || "Nearby search",
+            locationPayload
+          );
+        }}
+        onOpenMapPicker={() => {
+          setIsPermissionGuideOpen(false);
+          setIsLocationPickerOpen(true);
+        }}
+      />
+    </div>
   );
 }

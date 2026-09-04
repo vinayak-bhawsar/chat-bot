@@ -32,6 +32,15 @@ export interface ChatMessage {
   sources?: ChatSource[];
   reasoningSteps?: string[];
   suggestions?: string[];
+  locationRequired?: boolean;
+  locationMethods?: string[];
+  locationCoordinates?: {
+    latitude: number;
+    longitude: number;
+    altitude?: number | null;
+    address?: string;
+    full_address?: string;
+  };
 }
 
 export interface Conversation {
