@@ -375,7 +375,7 @@ export default function MapSidePanel({
           </div>
           <div className="min-w-0">
             <h3 className="text-sm font-semibold text-zinc-900 truncate">
-              Interactive Map
+              Maps
             </h3>
             <p className="text-[11.5px] text-zinc-500 truncate">
               View &amp; explore your current pinned location

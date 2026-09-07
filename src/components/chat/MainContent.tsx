@@ -46,6 +46,7 @@ import {
 } from "@/lib/maps";
 import MarkdownMessage from "./MarkdownMessage";
 import ReasoningAccordion from "./ReasoningAccordion";
+import GeneratedImageCard from "./GeneratedImageCard";
 
 import WelcomeScreen from "./WelcomeScreen";
 import ChatInput, {
@@ -57,6 +58,7 @@ import {
   ChatAttachment,
   ChatMessage,
   ChatSource,
+  GeneratedImage,
   Conversation,
 } from "@/types/chat";
 
@@ -1338,6 +1340,43 @@ export default function MainContent({
           },
 
           // ======================================================
+          // IMAGES (AI GENERATED IMAGES)
+          // ======================================================
+
+          onImages: (newImages) => {
+            if (!newImages || newImages.length === 0) {
+              return;
+            }
+
+            const targetId =
+              backendConversationId ??
+              conversation.id;
+
+            onUpdateConversation(
+              targetId,
+              (messages) =>
+                messages.map((msg) => {
+                  if (msg.id !== targetAssistantId) {
+                    return msg;
+                  }
+
+                  const existing = msg.images || [];
+                  const existingUrls = new Set(existing.map((img) => img.url));
+                  const uniqueNew = newImages.filter(
+                    (img) => !existingUrls.has(img.url)
+                  );
+
+                  if (uniqueNew.length === 0) return msg;
+
+                  return {
+                    ...msg,
+                    images: [...existing, ...uniqueNew],
+                  };
+                })
+            );
+          },
+
+          // ======================================================
           // ACTIVITY / STEP
           // ======================================================
 
@@ -1546,7 +1585,8 @@ export default function MainContent({
             conversationId,
             serverTitle,
             finalReasoning,
-            finalSources
+            finalSources,
+            finalImages
           ) => {
             if (
               conversationId
@@ -1651,6 +1691,13 @@ export default function MainContent({
                           ? msg.sources
                           : undefined;
 
+                    const effectiveImages =
+                      finalImages && finalImages.length > 0
+                        ? finalImages
+                        : msg.images && msg.images.length > 0
+                          ? msg.images
+                          : undefined;
+
                     return {
                       ...msg,
 
@@ -1661,6 +1708,7 @@ export default function MainContent({
                         finalReasoning || msg.reasoning,
 
                       sources: effectiveSources,
+                      images: effectiveImages,
                     };
                   }
                 )
@@ -2074,6 +2122,32 @@ export default function MainContent({
                                 !message.content
                               )}
                             />
+
+                            {/* Standalone Generated Images Gallery (if not already embedded in markdown) */}
+                            {message.images && message.images.length > 0 && (() => {
+                              const standaloneImages = message.images.filter((img) => {
+                                if (!message.content) return true;
+                                const urlMatch = img.url && message.content.includes(img.url);
+                                const fileMatch = img.filename && message.content.includes(img.filename);
+                                return !urlMatch && !fileMatch;
+                              });
+
+                              if (standaloneImages.length === 0) return null;
+
+                              return (
+                                <div className="mt-3 flex flex-col gap-3">
+                                  {standaloneImages.map((img, imgIdx) => (
+                                    <GeneratedImageCard
+                                      key={`${img.url || img.filename}-${imgIdx}`}
+                                      src={img.url}
+                                      filename={img.filename}
+                                      prompt={img.prompt}
+                                      model={img.model}
+                                    />
+                                  ))}
+                                </div>
+                              );
+                            })()}
 
                             {/* ====================================================
                             LOCATION ACTIONS (Get current location & Drop your location)

@@ -19,7 +19,7 @@ import KnowledgeBaseContent from "@/components/documents/KnowledgeBaseContent";
 
 import { Conversation } from "@/types/chat";
 import { apiRequest } from "@/lib/api";
-import { normalizeSources, normalizeSuggestions } from "@/lib/chat";
+import { normalizeSources, normalizeSuggestions, normalizeImages } from "@/lib/chat";
 import { useAuth } from "@/context/AuthContext";
 import {
   saveAttachmentMetadata,
@@ -1470,6 +1470,17 @@ function AppLayoutContent({
 
             const parsedSuggestions = rawSuggestions ? normalizeSuggestions(rawSuggestions) : undefined;
 
+            const rawImages =
+              message.images ??
+              message.generated_images ??
+              message.image ??
+              message.photos ??
+              message.metadata?.images ??
+              message.metadata?.generated_images ??
+              undefined;
+
+            const parsedImages = rawImages ? normalizeImages(rawImages) : undefined;
+
             const locationCoords =
               message.location_coordinates ||
               message.locationCoordinates ||
@@ -1506,6 +1517,7 @@ function AppLayoutContent({
               reasoning: reasoning || undefined,
               reasoningDurationSeconds: rawDuration ? Number(rawDuration) : undefined,
               sources: parsedSources && parsedSources.length > 0 ? parsedSources : undefined,
+              images: parsedImages && parsedImages.length > 0 ? parsedImages : undefined,
               suggestions: parsedSuggestions && parsedSuggestions.length > 0 ? parsedSuggestions : undefined,
               locationRequired: locationReq || undefined,
               locationMethods: Array.isArray(locationMeth) ? locationMeth : undefined,

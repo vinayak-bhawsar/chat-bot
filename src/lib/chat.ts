@@ -5,7 +5,7 @@ import {
   clearTokens,
 } from "./api";
 import { getLocalizedErrorMessage, normalizeErrorCode } from "@/i18n";
-import { ChatSource } from "@/types/chat";
+import { ChatSource, GeneratedImage } from "@/types/chat";
 
 const API_URL =
   process.env.NEXT_PUBLIC_API_URL ||
@@ -17,13 +17,15 @@ export interface ChatStreamHandlers {
   onReasoning?: (reasoning: string) => void;
   onActivity?: (step: string) => void;
   onSources?: (sources: ChatSource[]) => void;
+  onImages?: (images: GeneratedImage[]) => void;
   onTitle?: (title: string) => void;
   onDone?: (
     answer: string,
     conversationId: string,
     title?: string,
     reasoning?: string,
-    sources?: ChatSource[]
+    sources?: ChatSource[],
+    images?: GeneratedImage[]
   ) => void;
   onSuggestions?: (
     suggestions: string[],
@@ -184,6 +186,98 @@ export function normalizeSuggestions(rawSuggestions: unknown): string[] {
   }
 
   return results.slice(0, 3);
+}
+
+/**
+ * Resolves relative backend image URLs (e.g. /generated-images/..., /uploads/...)
+ * into fully qualified URLs using NEXT_PUBLIC_API_URL if needed.
+ */
+export function resolveImageUrl(src?: string | null): string {
+  if (!src) return "";
+  const trimmed = src.trim();
+
+  // If already absolute or base64 or blob
+  if (
+    trimmed.startsWith("http://") ||
+    trimmed.startsWith("https://") ||
+    trimmed.startsWith("data:") ||
+    trimmed.startsWith("blob:")
+  ) {
+    return trimmed;
+  }
+
+  const baseUrl = (
+    process.env.NEXT_PUBLIC_API_URL ||
+    "http://127.0.0.1:8000"
+  ).replace(/\/+$/, "");
+
+  if (trimmed.startsWith("/")) {
+    return `${baseUrl}${trimmed}`;
+  }
+  return `${baseUrl}/${trimmed}`;
+}
+
+/**
+ * Normalizes raw images from SSE events, backend payloads, or metadata
+ * into a clean, typed GeneratedImage array.
+ */
+export function normalizeImages(rawImages: unknown): GeneratedImage[] {
+  if (!rawImages) return [];
+  const list = Array.isArray(rawImages)
+    ? rawImages
+    : typeof rawImages === "object"
+    ? Object.values(rawImages as Record<string, unknown>)
+    : [];
+
+  const results: GeneratedImage[] = [];
+
+  for (const item of list) {
+    if (!item) continue;
+    if (typeof item === "string" && item.trim()) {
+      const url = resolveImageUrl(item.trim());
+      const filename = item.split("/").pop() || "image.png";
+      results.push({
+        type: "generated",
+        filename,
+        url,
+      });
+      continue;
+    }
+    if (typeof item !== "object") continue;
+    const img = item as Record<string, any>;
+    const rawUrl =
+      img.url ||
+      img.image_url ||
+      img.src ||
+      img.file_url ||
+      img.download_url ||
+      img.path ||
+      "";
+    const filename =
+      img.filename ||
+      img.file_name ||
+      img.name ||
+      (rawUrl ? rawUrl.split("/").pop() : "image.png") ||
+      "image.png";
+
+    const finalUrl = rawUrl
+      ? resolveImageUrl(rawUrl)
+      : filename
+      ? resolveImageUrl(`/generated-images/${filename}`)
+      : "";
+
+    if (!finalUrl) continue;
+
+    results.push({
+      type: img.type || "generated",
+      filename,
+      url: finalUrl,
+      prompt: img.prompt || img.caption || img.alt || undefined,
+      model: img.model || img.model_name || undefined,
+    });
+  }
+
+  return results;
 }
 
 export async function streamChat(
@@ -642,6 +736,24 @@ function processSSEEvent(
     }
   }
 
+  // Check and extract generated images in any event payload
+  const rawImages =
+    data?.images ||
+    data?.generated_images ||
+    data?.image_list ||
+    data?.image ||
+    data?.photos ||
+    (typeof data?.data === "object"
+      ? data?.data?.images || data?.data?.generated_images || data?.data?.image
+      : undefined);
+
+  if (rawImages) {
+    const parsedImages = normalizeImages(rawImages);
+    if (parsedImages.length > 0) {
+      handlers.onImages?.(parsedImages);
+    }
+  }
+
   // Check and extract suggestions from any event payload
   const rawSuggestions =
     data?.suggestions ||
@@ -896,6 +1008,22 @@ function processSSEEvent(
     return;
   }
 
+  // IMAGES EVENT
+  if (
+    inferredType === "images" ||
+    inferredType === "image" ||
+    eventType === "images" ||
+    eventType === "image"
+  ) {
+    if (rawImages) {
+      const parsedImages = normalizeImages(rawImages);
+      if (parsedImages.length > 0) {
+        handlers.onImages?.(parsedImages);
+      }
+    }
+    return;
+  }
+
   // DONE
   if (inferredType === "done" || inferredType === "complete") {
     const answer =
@@ -907,7 +1035,15 @@ function processSSEEvent(
       data?.reasoning_content ??
       undefined;
     const finalSources = rawSources ? normalizeSources(rawSources) : undefined;
-    handlers.onDone?.(answer, conversationId, eventTitle?.trim(), finalReasoning, finalSources);
+    const finalImages = rawImages ? normalizeImages(rawImages) : undefined;
+    handlers.onDone?.(
+      answer,
+      conversationId,
+      eventTitle?.trim(),
+      finalReasoning,
+      finalSources,
+      finalImages
+    );
     return;
   }
 
