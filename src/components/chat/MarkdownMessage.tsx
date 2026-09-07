@@ -4,6 +4,7 @@ import React, { useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
+import GeneratedImageCard from "./GeneratedImageCard";
 
 interface MarkdownMessageProps {
   content: string;
@@ -224,7 +225,39 @@ export default function MarkdownMessage({
           ),
 
           // Paragraphs
-          p: ({ children }) => <p className="mb-2.5 last:mb-0 leading-relaxed">{children}</p>,
+          p: ({ node, children }) => {
+            const hasBlockChild =
+              node?.children?.some(
+                (child: any) =>
+                  child?.tagName === "img" ||
+                  child?.tagName === "div" ||
+                  child?.tagName === "figure" ||
+                  child?.tagName === "table" ||
+                  (child?.type === "element" && child?.tagName === "img")
+              ) ||
+              React.Children.toArray(children).some((child: any) => {
+                if (React.isValidElement(child)) {
+                  return (
+                    child.type === "img" ||
+                    child.type === "div" ||
+                    child.type === GeneratedImageCard ||
+                    (typeof child.type === "function" && (child.type as any).name === "GeneratedImageCard")
+                  );
+                }
+                return false;
+              });
+
+            if (hasBlockChild) {
+              return (
+                <div className="mb-2.5 last:mb-0 leading-relaxed">
+                  {children}
+                </div>
+              );
+            }
+            return (
+              <p className="mb-2.5 last:mb-0 leading-relaxed">{children}</p>
+            );
+          },
 
           // Bold & Emphasis
           strong: ({ children }) => (
@@ -321,6 +354,18 @@ export default function MarkdownMessage({
               {children}
             </a>
           ),
+
+          // Images
+          img: ({ src, alt, title }) => {
+            if (!src || typeof src !== "string") return null;
+            return (
+              <GeneratedImageCard
+                src={src}
+                alt={alt || (typeof title === "string" ? title : "") || "Generated Image"}
+                prompt={alt || (typeof title === "string" ? title : "")}
+              />
+            );
+          },
 
           // Horizontal rule
           hr: () => <hr className="my-4 border-zinc-200" />,

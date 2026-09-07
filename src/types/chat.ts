@@ -22,6 +22,14 @@ export interface ChatSource {
   url?: string;
 }
 
+export interface GeneratedImage {
+  type?: "generated" | string;
+  filename?: string;
+  url: string;
+  prompt?: string;
+  model?: string;
+}
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
@@ -30,6 +38,7 @@ export interface ChatMessage {
   reasoning?: string;
   reasoningDurationSeconds?: number;
   sources?: ChatSource[];
+  images?: GeneratedImage[];
   reasoningSteps?: string[];
   suggestions?: string[];
   locationRequired?: boolean;
