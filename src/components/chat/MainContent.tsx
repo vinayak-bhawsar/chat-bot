@@ -2125,7 +2125,7 @@ export default function MainContent({
 
                             {/* Standalone Generated Images Gallery (if not already embedded in markdown) */}
                             {message.images && message.images.length > 0 && (() => {
-                              const standaloneImages = message.images.filter((img) => {
+                              const standaloneImages = message.images.filter((img: GeneratedImage) => {
                                 if (!message.content) return true;
                                 const urlMatch = img.url && message.content.includes(img.url);
                                 const fileMatch = img.filename && message.content.includes(img.filename);
@@ -2136,7 +2136,7 @@ export default function MainContent({
 
                               return (
                                 <div className="mt-3 flex flex-col gap-3">
-                                  {standaloneImages.map((img, imgIdx) => (
+                                  {standaloneImages.map((img: GeneratedImage, imgIdx: number) => (
                                     <GeneratedImageCard
                                       key={`${img.url || img.filename}-${imgIdx}`}
                                       src={img.url}
