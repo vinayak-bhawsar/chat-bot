@@ -185,7 +185,7 @@ export function normalizeSuggestions(rawSuggestions: unknown): string[] {
     }
   }
 
-  return results.slice(0, 3);
+  return results;
 }
 
 /**
@@ -765,6 +765,7 @@ function processSSEEvent(
       ? data?.data?.suggestions || data?.data?.follow_up || data?.data?.followup_questions
       : undefined);
 
+  let suggestionsDispatched = false;
   if (rawSuggestions) {
     const parsedSuggestions = normalizeSuggestions(rawSuggestions);
     if (parsedSuggestions.length > 0) {
@@ -776,6 +777,7 @@ function processSSEEvent(
         data?.conversation_id ||
         (typeof data?.data === "object" ? data?.data?.conversation_id : undefined);
       handlers.onSuggestions?.(parsedSuggestions, messageId, conversationId);
+      suggestionsDispatched = true;
     }
   }
 
@@ -884,14 +886,14 @@ function processSSEEvent(
     return;
   }
 
-  // SUGGESTIONS EVENT
+  // SUGGESTIONS EVENT (can arrive before or after "done" event)
   if (
     inferredType === "suggestions" ||
     inferredType === "suggestion" ||
     eventType === "suggestions" ||
     eventType === "suggestion"
   ) {
-    if (rawSuggestions) {
+    if (!suggestionsDispatched && rawSuggestions) {
       const parsedSuggestions = normalizeSuggestions(rawSuggestions);
       if (parsedSuggestions.length > 0) {
         const messageId =

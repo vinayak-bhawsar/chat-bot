@@ -693,8 +693,8 @@ export default function MainContent({
       setPendingLocationPrompt("");
       setInputLocation(null);
 
-      // Submit as a new turn with location coordinates - preserves complete chat history
-      await handleSubmit(effectivePrompt, locationPayload);
+      // Location continuation: reuse existing user message and update with coordinates
+      await handleSubmit(effectivePrompt, locationPayload, true);
     } catch (err: any) {
       console.warn("Location request failed or was cancelled:", err);
       setIsAcquiringLocation(false);
@@ -747,8 +747,8 @@ export default function MainContent({
     setPendingLocationPrompt("");
     setInputLocation(null);
 
-    // Submit as a new turn with location coordinates - preserves complete chat history
-    await handleSubmit(targetPrompt || "Nearby search", locationPayload);
+    // Location continuation: reuse existing user message and update with coordinates
+    await handleSubmit(targetPrompt || "Nearby search", locationPayload, true);
   };
 
   // ==============================================================
@@ -757,7 +757,8 @@ export default function MainContent({
 
   const handleSubmit = async (
     message: string,
-    coordinates?: AttachedLocation | GeolocationCoordinates | null
+    coordinates?: AttachedLocation | GeolocationCoordinates | null,
+    isLocationContinuationParam?: boolean
   ) => {
     // ------------------------------------------------------------
     // Prevent duplicate request
@@ -1217,13 +1218,58 @@ export default function MainContent({
       onUpdateConversationTitle?.(conversation.id, instantTitle);
     }
 
-    onUpdateConversation(
-      conversation.id,
-      [
+    const lastUserIndex = [...conversation.messages]
+      .map((m: any) => m.role)
+      .lastIndexOf("user");
+    const lastAssistantIndex = [...conversation.messages]
+      .map((m: any) => m.role)
+      .lastIndexOf("assistant");
+    const lastAssistantMsg =
+      lastAssistantIndex !== -1 ? conversation.messages[lastAssistantIndex] : null;
+    const prevUserMsg =
+      lastUserIndex !== -1 ? conversation.messages[lastUserIndex] : null;
+
+    const isLocationContinuation = Boolean(
+      isLocationContinuationParam ||
+      (effectiveCoordinates &&
+        lastAssistantMsg &&
+        lastUserIndex !== -1 &&
+        lastAssistantIndex > lastUserIndex &&
+        (lastAssistantMsg.locationRequired ||
+          isLocationPromptRequired(lastAssistantMsg, prevUserMsg?.content)))
+    );
+
+    let nextMessages: any[];
+
+    if (
+      isLocationContinuation &&
+      lastUserIndex !== -1 &&
+      lastAssistantIndex > lastUserIndex
+    ) {
+      // Location continuation: reuse existing user message and update with location coordinates
+      nextMessages = conversation.messages.map((m: any, idx: number) => {
+        if (idx === lastUserIndex) {
+          return {
+            ...m,
+            locationCoordinates: effectiveCoordinates || m.locationCoordinates,
+          };
+        }
+        if (idx === lastAssistantIndex) {
+          return assistantMessage;
+        }
+        return m;
+      });
+    } else {
+      nextMessages = [
         ...conversation.messages,
         userMessage,
         assistantMessage,
-      ],
+      ];
+    }
+
+    onUpdateConversation(
+      conversation.id,
+      nextMessages,
       conversation.title || instantTitle
     );
 
@@ -2029,6 +2075,36 @@ export default function MainContent({
 
 
                           {(() => {
+                            const hasLocation = Boolean(
+                              message.locationCoordinates &&
+                              (message.locationCoordinates.address ||
+                                typeof message.locationCoordinates.latitude === "number")
+                            );
+
+                            const prevUserMsg = activeConversation.messages
+                              .slice(0, msgIdx)
+                              .reverse()
+                              .find(
+                                (m: any) =>
+                                  m.role === "user" ||
+                                  (m.role as string) === "human" ||
+                                  String(m.role || "").toLowerCase() === "user"
+                              );
+
+                            const isDuplicateOrPlaceholderLocationPrompt = Boolean(
+                              hasLocation &&
+                              (
+                                !message.content ||
+                                !message.content.trim() ||
+                                message.content.trim().toLowerCase() === "nearby search" ||
+                                message.content.trim().toLowerCase() === "current location" ||
+                                message.content.trim().toLowerCase() === "my location" ||
+                                (prevUserMsg &&
+                                  prevUserMsg.content &&
+                                  message.content.trim().toLowerCase() === prevUserMsg.content.trim().toLowerCase())
+                              )
+                            );
+
                             const isAutoSummaryPrompt =
                               Boolean(message.attachment) &&
                               Boolean(
@@ -2038,21 +2114,36 @@ export default function MainContent({
                                   message.content.trim() === "")
                               );
 
-                            if (!message.content || isAutoSummaryPrompt) {
+                            const showTextContent =
+                              Boolean(message.content && message.content.trim()) &&
+                              !isAutoSummaryPrompt &&
+                              !isDuplicateOrPlaceholderLocationPrompt;
+
+                            if (!showTextContent && !hasLocation) {
                               return null;
                             }
 
                             return (
                               <div className="rounded-2xl rounded-br-xs bg-[#eef9fb] border border-[#56C5D9]/35 text-zinc-900 px-4 py-2.5 shadow-2xs">
-                                <div className="whitespace-pre-wrap leading-relaxed text-zinc-900 text-[14.5px]">
-                                  {message.content}
-                                </div>
-                                {message.locationCoordinates && (message.locationCoordinates.address || message.locationCoordinates.latitude) && (
-                                  <div className="mt-1.5 flex items-center gap-1.5 text-[11.5px] font-medium text-[#0e879c] border-t border-[#56C5D9]/20 pt-1.5">
+                                {showTextContent && (
+                                  <div className="whitespace-pre-wrap leading-relaxed text-zinc-900 text-[14.5px]">
+                                    {message.content}
+                                  </div>
+                                )}
+                                {hasLocation && (
+                                  <div
+                                    className={`flex items-center gap-1.5 text-[12px] font-medium text-[#0e879c] ${
+                                      showTextContent
+                                        ? "mt-1.5 border-t border-[#56C5D9]/20 pt-1.5"
+                                        : ""
+                                    }`}
+                                  >
                                     <MapPin className="h-3.5 w-3.5 shrink-0 text-[#2ba8be]" />
                                     <span className="truncate max-w-[240px] sm:max-w-[320px]">
                                       {message.locationCoordinates.address ||
-                                        `${message.locationCoordinates.latitude.toFixed(4)}, ${message.locationCoordinates.longitude.toFixed(4)}`}
+                                        (typeof message.locationCoordinates.latitude === "number"
+                                          ? `${message.locationCoordinates.latitude.toFixed(4)}, ${message.locationCoordinates.longitude.toFixed(4)}`
+                                          : "")}
                                     </span>
                                   </div>
                                 )}
@@ -2308,10 +2399,18 @@ export default function MainContent({
                               const lastAssistantIdx = activeConversation.messages
                                 .map((m: any) => m.role)
                                 .lastIndexOf("assistant");
-                              const isCurrentAssistant = msgIdx === lastAssistantIdx || msgIdx === activeConversation.messages.length - 1;
+                              const isCurrentAssistant =
+                                msgIdx === lastAssistantIdx ||
+                                msgIdx === activeConversation.messages.length - 1;
 
-                              // Default hide old suggestions when user sends a new query
+                              // Hide old suggestions when user sends a new query
                               if (!isCurrentAssistant) return null;
+
+                              const validSuggestions = (message.suggestions as string[]).filter(
+                                (s) => typeof s === "string" && s.trim().length > 0
+                              );
+
+                              if (validSuggestions.length === 0) return null;
 
                               return (
                                 <div className="mt-4 flex flex-col gap-2 pt-1 animate-in fade-in duration-200">
@@ -2321,11 +2420,7 @@ export default function MainContent({
                                   </div>
 
                                   <div className="flex flex-col sm:flex-row sm:flex-wrap gap-2">
-                                    {(message.suggestions as string[]).slice(0, 3).map((suggestion: string, sIdx: number) => {
-                                      if (!suggestion || typeof suggestion !== "string" || !suggestion.trim()) {
-                                        return null;
-                                      }
-
+                                    {validSuggestions.map((suggestion: string, sIdx: number) => {
                                       const cleanSuggestion = suggestion.trim();
 
                                       return (
@@ -2333,11 +2428,12 @@ export default function MainContent({
                                           key={`sug-${message.id}-${sIdx}`}
                                           type="button"
                                           disabled={isStreaming}
+                                          aria-label={cleanSuggestion}
                                           onClick={() => {
                                             if (isStreaming) return;
                                             handleSubmit(cleanSuggestion);
                                           }}
-                                          className="group flex items-center justify-between gap-2.5 rounded-xl border border-zinc-200/90 bg-zinc-50/80 px-3.5 py-2 text-left text-xs font-medium text-zinc-700 transition-all duration-150 hover:border-[#56C5D9]/70 hover:bg-[#eef9fb]/80 hover:text-zinc-900 hover:shadow-2xs active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
+                                          className="group flex items-center justify-between gap-2.5 rounded-xl border border-zinc-200/90 bg-zinc-50/80 px-3.5 py-2 text-left text-xs font-medium text-zinc-700 transition-all duration-150 hover:border-[#56C5D9]/70 hover:bg-[#eef9fb]/80 hover:text-zinc-900 hover:shadow-2xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#56C5D9] active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer"
                                         >
                                           <span className="leading-snug break-words">{cleanSuggestion}</span>
                                           <ArrowRight className="h-3 w-3 shrink-0 text-zinc-400 opacity-0 transition-all duration-150 group-hover:opacity-100 group-hover:translate-x-0.5 group-hover:text-[#2ba8be]" />
@@ -2472,7 +2568,8 @@ export default function MainContent({
 
           handleSubmit(
             targetPrompt || "Nearby search",
-            locationPayload
+            locationPayload,
+            true
           );
         }}
         onOpenMapPicker={() => {
